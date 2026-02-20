@@ -974,3 +974,13 @@ fn coverage_default_slotmap() {
     let a = map.insert(42);
     assert_eq!(*map.get(a).unwrap(), 42);
 }
+
+#[test]
+fn lazy_insert_commit() {
+    let map = SlotMap::new();
+    let (id, guard) = map.lazy_insert();
+    assert_eq!(map.len(), 0);
+    guard.commit(42i32);
+    assert!(map.get(id).is_some_and(|v| *v == 42));
+    assert_eq!(map.len(), 1);
+}

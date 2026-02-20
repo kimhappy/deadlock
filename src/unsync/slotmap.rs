@@ -113,6 +113,17 @@ impl<T> SlotMap<T> {
         id
     }
 
+    /// Reserves a slot and returns its ID plus a guard. The slot is not
+    /// considered live until the guard is committed with a value; until then
+    /// [`get`][Self::get] and [`contains`][Self::contains] return `None`/`false`
+    /// for the ID, and the slot is not yielded by iterators. If the guard is
+    /// dropped without calling [`commit`][LazyInsert::commit], the slot is
+    /// returned to the free list. Time: O(1) amortized.
+    pub fn lazy_insert(&mut self) -> (usize, LazyInsert<'_, T>) {
+        let id = self.prepare_lazy_insert();
+        (id, LazyInsert { from: self, id })
+    }
+
     /// Removes the entry at `id` and returns its value, or `None` if `id` is
     /// not a live entry. Time: O(1).
     pub fn remove(&mut self, id: usize) -> Option<T> {
@@ -235,11 +246,59 @@ impl<T> SlotMap<T> {
             len: self.len,
         }
     }
+
+    pub(crate) fn prepare_lazy_insert(&mut self) -> usize {
+        let id = self.next;
+        self.next = if self.entries.len() == id {
+            self.entries.push(Err(usize::MAX));
+            id + 1
+        } else {
+            let entry = unsafe { self.entries.get_unchecked_mut(id) };
+            mem::replace(unsafe { entry.as_mut().unwrap_err_unchecked() }, usize::MAX)
+        };
+
+        id
+    }
+
+    pub(crate) unsafe fn commit_lazy_insert(&mut self, id: usize, value: T) {
+        let entry = unsafe { self.entries.get_unchecked_mut(id) };
+        *entry = Ok(value);
+        self.len += 1;
+    }
+
+    pub(crate) unsafe fn drop_lazy_insert(&mut self, id: usize) {
+        let new_entry = Err(self.next);
+        let entry = unsafe { self.entries.get_unchecked_mut(id) };
+        *entry = new_entry;
+        self.next = id
+    }
 }
 
 impl<T> Default for SlotMap<T> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Guard for a slot reserved by [`SlotMap::lazy_insert`]. Call [`commit`][Self::commit]
+/// to store a value and make the slot live; otherwise the slot is freed on drop.
+pub struct LazyInsert<'a, T> {
+    from: &'a mut SlotMap<T>,
+    id: usize,
+}
+
+impl<'a, T> LazyInsert<'a, T> {
+    /// Stores `value` in the reserved slot and makes it live. Consumes the guard
+    /// so that drop does not run and the slot is not freed.
+    pub fn commit(self, value: T) {
+        unsafe { self.from.commit_lazy_insert(self.id, value) }
+        mem::forget(self)
+    }
+}
+
+impl<'a, T> Drop for LazyInsert<'a, T> {
+    fn drop(&mut self) {
+        unsafe { self.from.drop_lazy_insert(self.id) }
     }
 }
 

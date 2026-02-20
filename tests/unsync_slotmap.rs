@@ -316,3 +316,12 @@ fn default_slotmap() {
     let a = map.insert(10);
     assert_eq!(map.get(a), Some(&10));
 }
+
+#[test]
+fn lazy_insert_commit() {
+    let mut map = SlotMap::new();
+    let (id, guard) = map.lazy_insert();
+    guard.commit(42i32);
+    assert!(map.get(id).is_some_and(|v| *v == 42));
+    assert_eq!(map.len(), 1);
+}

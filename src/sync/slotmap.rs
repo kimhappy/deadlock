@@ -3,7 +3,7 @@ use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
 use std::{
-    mem,
+    mem::{self, ManuallyDrop},
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -176,6 +176,25 @@ impl<T> SlotMap<T> {
         self.merge(shard_index, id)
     }
 
+    /// Reserves a slot in the same way as [`insert`][Self::insert] (shard choice,
+    /// etc.) and returns the stable ID plus a guard. The slot is not live until
+    /// the guard is committed; if the guard is dropped without [`commit`][LazyInsert::commit],
+    /// the slot is freed. Time: O(1) amortized per shard.
+    pub fn lazy_insert(&self) -> (usize, LazyInsert<'_, T>) {
+        let shard_index = self.select_shard();
+        let shard = unsafe { self.shards.get_unchecked(shard_index) };
+        let mut guard = shard.inner.write();
+        let id = guard.prepare_lazy_insert();
+        (
+            self.merge(shard_index, id),
+            LazyInsert {
+                guard: ManuallyDrop::new(guard),
+                shard,
+                id,
+            },
+        )
+    }
+
     /// Removes the entry at `id` and returns its value, or `None` if `id` is
     /// not a live entry. Time: O(1).
     pub fn remove(&self, id: usize) -> Option<T> {
@@ -303,6 +322,34 @@ impl<T> SlotMap<T> {
 
     fn rr_interval(&self) -> usize {
         self.num_shards() >> 2
+    }
+}
+
+/// Guard for a slot reserved by [`SlotMap::lazy_insert`]. Call [`commit`][Self::commit]
+/// to store a value and make the slot live; otherwise the slot is freed on drop.
+pub struct LazyInsert<'a, T> {
+    guard: ManuallyDrop<RwLockWriteGuard<'a, unsync::SlotMap<T>>>,
+    shard: &'a Shard<T>,
+    id: usize,
+}
+
+impl<'a, T> LazyInsert<'a, T> {
+    /// Stores `value` in the reserved slot and makes it live. Consumes the guard
+    /// so that drop does not run and the slot is not freed.
+    pub fn commit(mut self, value: T) {
+        unsafe { self.guard.commit_lazy_insert(self.id, value) };
+        self.shard.len.fetch_add(1, Ordering::Relaxed);
+        unsafe { ManuallyDrop::drop(&mut self.guard) }
+        mem::forget(self)
+    }
+}
+
+impl<'a, T> Drop for LazyInsert<'a, T> {
+    fn drop(&mut self) {
+        unsafe {
+            self.guard.drop_lazy_insert(self.id);
+            ManuallyDrop::drop(&mut self.guard)
+        }
     }
 }
 
