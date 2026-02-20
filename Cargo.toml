@@ -1,0 +1,21 @@
+[package]
+name = "deadlock"
+version = "0.1.0"
+edition = "2018"
+description = "Stable-ID slot map and min-heap with unsync and thread-safe (sync) variants."
+authors = ["Hwanhee Kim <babtul21@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/kimhappy/deadlock"
+readme = "README.md"
+
+[dependencies]
+parking_lot = "0.12"
+crabtime = "1.1"
+crossbeam-utils = "0.8"
+
+[dev-dependencies]
+criterion = "0.8"
+
+[[bench]]
+name = "slotmap"
+harness = false
