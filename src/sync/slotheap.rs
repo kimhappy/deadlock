@@ -176,64 +176,176 @@ where
     }
 }
 
-#[crabtime::function]
-fn def_sync_heap_guard(types: Vec<&str>) {
-    for ty in types {
-        let (target, deref_ref, deref_mut_ref) = if ty.contains("Key") {
-            (
-                "K",
-                "&self.guard.by_index(idx).0",
-                "&mut self.guard.by_index_mut(idx).0",
-            )
-        } else {
-            (
-                "(K, V)",
-                "self.guard.by_index(idx)",
-                "self.guard.by_index_mut(idx)",
-            )
-        };
-        let (index_field, index_expr) = if ty.starts_with("Ref") {
-            ("index: usize,", "self.index")
-        } else {
-            ("", "0")
-        };
-        let deref_body = deref_ref.replace("idx", index_expr);
-        let deref_mut_body = deref_mut_ref.replace("idx", index_expr);
+/// Exclusive guard over the minimum element's `(key, value)` pair. Mutating
+/// the guard marks the heap as dirty; on drop the heap is re-heapified.
+pub struct PeekMut<'a, K, V>
+where
+    K: Ord,
+{
+    guard: RwLockWriteGuard<'a, unsync::SlotHeap<K, V>>,
+    dirty: bool,
+}
 
-        crabtime::output! {
-            pub struct {{ty}}<'a, K, V> where K: Ord {
-                guard: RwLockWriteGuard<'a, unsync::SlotHeap<K, V>>,
-                {{index_field}}
-                dirty: bool,
-            }
+impl<K, V> Deref for PeekMut<'_, K, V>
+where
+    K: Ord,
+{
+    type Target = (K, V);
 
-            impl<K, V> Deref for {{ty}}<'_, K, V> where K: Ord {
-                type Target = {{target}};
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.guard.by_index(0) }
+    }
+}
 
-                fn deref(&self) -> &Self::Target {
-                    unsafe { {{deref_body}} }
-                }
-            }
+impl<K, V> DerefMut for PeekMut<'_, K, V>
+where
+    K: Ord,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.dirty = true;
+        unsafe { self.guard.by_index_mut(0) }
+    }
+}
 
-            impl<K, V> DerefMut for {{ty}}<'_, K, V> where K: Ord {
-                fn deref_mut(&mut self) -> &mut Self::Target {
-                    self.dirty = true;
-                    unsafe { {{deref_mut_body}} }
-                }
-            }
-
-            impl<K, V> Drop for {{ty}}<'_, K, V> where K: Ord {
-                fn drop(&mut self) {
-                    if self.dirty {
-                        unsafe { self.guard.heapify({{index_expr}}) }
-                    }
-                }
-            }
+impl<K, V> Drop for PeekMut<'_, K, V>
+where
+    K: Ord,
+{
+    fn drop(&mut self) {
+        if self.dirty {
+            unsafe { self.guard.heapify(0) }
         }
     }
 }
 
-def_sync_heap_guard!(["PeekMut", "PeekKeyMut", "RefMut", "RefKeyMut"]);
+/// Exclusive guard over the minimum element's key. Mutating the guard marks
+/// the heap as dirty; on drop the heap is re-heapified.
+pub struct PeekKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    guard: RwLockWriteGuard<'a, unsync::SlotHeap<K, V>>,
+    dirty: bool,
+}
+
+impl<K, V> Deref for PeekKeyMut<'_, K, V>
+where
+    K: Ord,
+{
+    type Target = K;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &self.guard.by_index(0).0 }
+    }
+}
+
+impl<K, V> DerefMut for PeekKeyMut<'_, K, V>
+where
+    K: Ord,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.dirty = true;
+        unsafe { &mut self.guard.by_index_mut(0).0 }
+    }
+}
+
+impl<K, V> Drop for PeekKeyMut<'_, K, V>
+where
+    K: Ord,
+{
+    fn drop(&mut self) {
+        if self.dirty {
+            unsafe { self.guard.heapify(0) }
+        }
+    }
+}
+
+/// Exclusive guard over the `(key, value)` pair of an element identified by
+/// index. Mutating the guard marks the heap as dirty; on drop the heap is
+/// re-heapified.
+pub struct RefMut<'a, K, V>
+where
+    K: Ord,
+{
+    guard: RwLockWriteGuard<'a, unsync::SlotHeap<K, V>>,
+    index: usize,
+    dirty: bool,
+}
+
+impl<K, V> Deref for RefMut<'_, K, V>
+where
+    K: Ord,
+{
+    type Target = (K, V);
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.guard.by_index(self.index) }
+    }
+}
+
+impl<K, V> DerefMut for RefMut<'_, K, V>
+where
+    K: Ord,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.dirty = true;
+        unsafe { self.guard.by_index_mut(self.index) }
+    }
+}
+
+impl<K, V> Drop for RefMut<'_, K, V>
+where
+    K: Ord,
+{
+    fn drop(&mut self) {
+        if self.dirty {
+            unsafe { self.guard.heapify(self.index) }
+        }
+    }
+}
+
+/// Exclusive guard over the key of an element identified by index. Mutating
+/// the guard marks the heap as dirty; on drop the heap is re-heapified.
+pub struct RefKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    guard: RwLockWriteGuard<'a, unsync::SlotHeap<K, V>>,
+    index: usize,
+    dirty: bool,
+}
+
+impl<K, V> Deref for RefKeyMut<'_, K, V>
+where
+    K: Ord,
+{
+    type Target = K;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &self.guard.by_index(self.index).0 }
+    }
+}
+
+impl<K, V> DerefMut for RefKeyMut<'_, K, V>
+where
+    K: Ord,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.dirty = true;
+        unsafe { &mut self.guard.by_index_mut(self.index).0 }
+    }
+}
+
+impl<K, V> Drop for RefKeyMut<'_, K, V>
+where
+    K: Ord,
+{
+    fn drop(&mut self) {
+        if self.dirty {
+            unsafe { self.guard.heapify(self.index) }
+        }
+    }
+}
 
 impl<K, V> Default for SlotHeap<K, V>
 where

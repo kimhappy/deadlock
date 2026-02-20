@@ -345,63 +345,245 @@ where
     }
 }
 
-#[crabtime::function]
-fn def_heap_guard(types: Vec<&str>) {
-    for ty in types {
-        let (target, item) = if ty.contains("Key") {
-            ("K", "item.0")
-        } else {
-            ("(K, V)", "item")
-        };
-        let (index_field, index, heapify) = if ty.starts_with("Ref") {
-            ("index: usize,", "self.index", "heapify")
-        } else {
-            ("", "0", "heapify_down")
-        };
+/// Exclusive guard over the minimum element's `(key, value)` pair. Mutating
+/// the guard marks the heap as dirty; on drop the heap is re-heapified.
+pub struct PeekMut<'a, K, V>
+where
+    K: Ord,
+{
+    dirty: bool,
+    from: &'a mut SlotHeap<K, V>,
+}
 
-        crabtime::output! {
-            pub struct {{ty}}<'a, K, V> where K: Ord {
-                dirty: bool,
-                from: &'a mut SlotHeap<K, V>,
-                {{index_field}}
-            }
+impl<'a, K, V> Deref for PeekMut<'a, K, V>
+where
+    K: Ord,
+{
+    type Target = (K, V);
 
-            impl<'a, K, V> Deref for {{ty}}<'a, K, V> where K: Ord {
-                type Target = {{target}};
+    fn deref(&self) -> &Self::Target {
+        unsafe { &self.from.entries.get_unchecked(0).item }
+    }
+}
 
-                fn deref(&self) -> &Self::Target {
-                    unsafe { &self.from.entries.get_unchecked({{index}}).{{item}} }
-                }
-            }
+impl<'a, K, V> DerefMut for PeekMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.dirty = true;
+        unsafe { &mut self.from.entries.get_unchecked_mut(0).item }
+    }
+}
 
-            impl<'a, K, V> DerefMut for {{ty}}<'a, K, V> where K: Ord {
-                fn deref_mut(&mut self) -> &mut Self::Target {
-                    self.dirty = true;
-                    unsafe { &mut self.from.entries.get_unchecked_mut({{index}}).{{item}} }
-                }
-            }
+impl<'a, K, V> AsRef<(K, V)> for PeekMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn as_ref(&self) -> &(K, V) {
+        self.deref()
+    }
+}
 
-            impl<'a, K, V> AsRef<{{target}}> for {{ty}}<'a, K, V> where K: Ord {
-                fn as_ref(&self) -> &{{target}} {
-                    self.deref()
-                }
-            }
+impl<'a, K, V> AsMut<(K, V)> for PeekMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn as_mut(&mut self) -> &mut (K, V) {
+        self.deref_mut()
+    }
+}
 
-            impl<'a, K, V> AsMut<{{target}}> for {{ty}}<'a, K, V> where K: Ord {
-                fn as_mut(&mut self) -> &mut {{target}} {
-                    self.deref_mut()
-                }
-            }
-
-            impl<'a, K, V> Drop for {{ty}}<'a, K, V> where K: Ord {
-                fn drop(&mut self) {
-                    if self.dirty {
-                        unsafe { self.from.{{heapify}}({{index}}) }
-                    }
-                }
-            }
+impl<'a, K, V> Drop for PeekMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn drop(&mut self) {
+        if self.dirty {
+            unsafe { self.from.heapify_down(0) }
         }
     }
 }
 
-def_heap_guard!(["PeekMut", "PeekKeyMut", "RefMut", "RefKeyMut"]);
+/// Exclusive guard over the minimum element's key. Mutating the guard marks
+/// the heap as dirty; on drop the heap is re-heapified.
+pub struct PeekKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    dirty: bool,
+    from: &'a mut SlotHeap<K, V>,
+}
+
+impl<'a, K, V> Deref for PeekKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    type Target = K;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &self.from.entries.get_unchecked(0).item.0 }
+    }
+}
+
+impl<'a, K, V> DerefMut for PeekKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.dirty = true;
+        unsafe { &mut self.from.entries.get_unchecked_mut(0).item.0 }
+    }
+}
+
+impl<'a, K, V> AsRef<K> for PeekKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn as_ref(&self) -> &K {
+        self.deref()
+    }
+}
+
+impl<'a, K, V> AsMut<K> for PeekKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn as_mut(&mut self) -> &mut K {
+        self.deref_mut()
+    }
+}
+
+impl<'a, K, V> Drop for PeekKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn drop(&mut self) {
+        if self.dirty {
+            unsafe { self.from.heapify_down(0) }
+        }
+    }
+}
+
+/// Exclusive guard over the `(key, value)` pair of an element identified by
+/// index. Mutating the guard marks the heap as dirty; on drop the heap is
+/// re-heapified.
+pub struct RefMut<'a, K, V>
+where
+    K: Ord,
+{
+    dirty: bool,
+    from: &'a mut SlotHeap<K, V>,
+    index: usize,
+}
+
+impl<'a, K, V> Deref for RefMut<'a, K, V>
+where
+    K: Ord,
+{
+    type Target = (K, V);
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &self.from.entries.get_unchecked(self.index).item }
+    }
+}
+
+impl<'a, K, V> DerefMut for RefMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.dirty = true;
+        unsafe { &mut self.from.entries.get_unchecked_mut(self.index).item }
+    }
+}
+
+impl<'a, K, V> AsRef<(K, V)> for RefMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn as_ref(&self) -> &(K, V) {
+        self.deref()
+    }
+}
+
+impl<'a, K, V> AsMut<(K, V)> for RefMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn as_mut(&mut self) -> &mut (K, V) {
+        self.deref_mut()
+    }
+}
+
+impl<'a, K, V> Drop for RefMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn drop(&mut self) {
+        if self.dirty {
+            unsafe { self.from.heapify(self.index) }
+        }
+    }
+}
+
+/// Exclusive guard over the key of an element identified by index. Mutating
+/// the guard marks the heap as dirty; on drop the heap is re-heapified.
+pub struct RefKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    dirty: bool,
+    from: &'a mut SlotHeap<K, V>,
+    index: usize,
+}
+
+impl<'a, K, V> Deref for RefKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    type Target = K;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &self.from.entries.get_unchecked(self.index).item.0 }
+    }
+}
+
+impl<'a, K, V> DerefMut for RefKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.dirty = true;
+        unsafe { &mut self.from.entries.get_unchecked_mut(self.index).item.0 }
+    }
+}
+
+impl<'a, K, V> AsRef<K> for RefKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn as_ref(&self) -> &K {
+        self.deref()
+    }
+}
+
+impl<'a, K, V> AsMut<K> for RefKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn as_mut(&mut self) -> &mut K {
+        self.deref_mut()
+    }
+}
+
+impl<'a, K, V> Drop for RefKeyMut<'a, K, V>
+where
+    K: Ord,
+{
+    fn drop(&mut self) {
+        if self.dirty {
+            unsafe { self.from.heapify(self.index) }
+        }
+    }
+}

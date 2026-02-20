@@ -243,95 +243,305 @@ impl<T> Default for SlotMap<T> {
     }
 }
 
-#[crabtime::function]
-fn def_slotmap_iterator(types: Vec<&str>) {
-    for ty in types {
-        let lt = ty.starts_with("Into").then_some("").unwrap_or("'a, ");
-        let ty_full = format!("{ty}<{lt}T>");
-        let inner = {
-            let inner = if ty == "Drain" {
-                "vec::Drain"
-            } else if ty.starts_with("Into") {
-                "vec::IntoIter"
-            } else if ty.ends_with("Mut") {
-                "slice::IterMut"
-            } else {
-                "slice::Iter"
-            };
-            let inner = format!("{inner}<{lt}Result<T, usize>>");
+/// Iterator over `(id, value)` pairs of a slot map by shared reference.
+pub struct Iter<'a, T> {
+    inner: Enumerate<slice::Iter<'a, Result<T, usize>>>,
+    len: usize,
+}
 
-            if ty.contains("Values") {
-                inner
-            } else {
-                format!("Enumerate<{inner}>")
-            }
-        };
-        let elem_ty = {
-            let elem_ty = if ty.ends_with("Ids") {
-                "usize"
-            } else if ty.ends_with("Mut") {
-                "&'a mut T"
-            } else if ty.starts_with("Into") || ty == "Drain" {
-                "T"
-            } else {
-                "&'a T"
-            };
-            if ty.contains("Iter") || ty == "Drain" {
-                format!("(usize, {elem_ty})")
-            } else {
-                elem_ty.into()
-            }
-        };
-        let map_expr = if ty.ends_with("Ids") {
-            "|(id, entry)| entry.is_ok().then_some(id)"
-        } else if ty.contains("Values") {
-            "Okok::okok"
-        } else {
-            "|(id, entry)| entry.okok().map(|value| (id, value))"
-        };
+impl<'a, T> Iterator for Iter<'a, T> {
+    type Item = (usize, &'a T);
 
-        crabtime::output! {
-            pub struct {{ty_full}} {
-                inner: {{inner}},
-                len: usize,
-            }
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self
+            .inner
+            .find_map(|(id, entry)| entry.okok().map(|value| (id, value)))?;
+        self.len -= 1;
+        Some(item)
+    }
 
-            impl<{{lt}}T> Iterator for {{ty_full}} {
-                type Item = {{elem_ty}};
-
-                fn next(&mut self) -> Option<Self::Item> {
-                    let item = self.inner.find_map({{map_expr}})?;
-                    self.len -= 1;
-                    Some(item)
-                }
-
-                fn size_hint(&self) -> (usize, Option<usize>) {
-                    (self.len, Some(self.len))
-                }
-            }
-
-            impl<{{lt}}T> DoubleEndedIterator for {{ty_full}} {
-                fn next_back(&mut self) -> Option<Self::Item> {
-                    let item = (&mut self.inner).rev().find_map({{map_expr}})?;
-                    self.len -= 1;
-                    Some(item)
-                }
-            }
-
-            impl<{{lt}}T> ExactSizeIterator for {{ty_full}} {}
-            impl<{{lt}}T> FusedIterator for {{ty_full}} {}
-        }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
     }
 }
 
-def_slotmap_iterator!([
-    "Iter",
-    "IterMut",
-    "IntoIter",
-    "Drain",
-    "Ids",
-    "IntoIds",
-    "Values",
-    "ValuesMut",
-    "IntoValues"
-]);
+impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let item = (&mut self.inner)
+            .rev()
+            .find_map(|(id, entry)| entry.okok().map(|value| (id, value)))?;
+        self.len -= 1;
+        Some(item)
+    }
+}
+
+impl<'a, T> ExactSizeIterator for Iter<'a, T> {}
+impl<'a, T> FusedIterator for Iter<'a, T> {}
+
+/// Iterator over `(id, value)` pairs of a slot map by mutable reference.
+pub struct IterMut<'a, T> {
+    inner: Enumerate<slice::IterMut<'a, Result<T, usize>>>,
+    len: usize,
+}
+
+impl<'a, T> Iterator for IterMut<'a, T> {
+    type Item = (usize, &'a mut T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self
+            .inner
+            .find_map(|(id, entry)| entry.okok().map(|value| (id, value)))?;
+        self.len -= 1;
+        Some(item)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let item = (&mut self.inner)
+            .rev()
+            .find_map(|(id, entry)| entry.okok().map(|value| (id, value)))?;
+        self.len -= 1;
+        Some(item)
+    }
+}
+
+impl<'a, T> ExactSizeIterator for IterMut<'a, T> {}
+impl<'a, T> FusedIterator for IterMut<'a, T> {}
+
+/// Iterator that yields `(id, value)` pairs by value when consuming the slot map.
+pub struct IntoIter<T> {
+    inner: Enumerate<vec::IntoIter<Result<T, usize>>>,
+    len: usize,
+}
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = (usize, T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self
+            .inner
+            .find_map(|(id, entry)| entry.okok().map(|value| (id, value)))?;
+        self.len -= 1;
+        Some(item)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<T> DoubleEndedIterator for IntoIter<T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let item = (&mut self.inner)
+            .rev()
+            .find_map(|(id, entry)| entry.okok().map(|value| (id, value)))?;
+        self.len -= 1;
+        Some(item)
+    }
+}
+
+impl<T> ExactSizeIterator for IntoIter<T> {}
+impl<T> FusedIterator for IntoIter<T> {}
+
+/// Iterator that drains `(id, value)` pairs from the slot map.
+pub struct Drain<'a, T> {
+    inner: Enumerate<vec::Drain<'a, Result<T, usize>>>,
+    len: usize,
+}
+
+impl<'a, T> Iterator for Drain<'a, T> {
+    type Item = (usize, T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self
+            .inner
+            .find_map(|(id, entry)| entry.okok().map(|value| (id, value)))?;
+        self.len -= 1;
+        Some(item)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for Drain<'a, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let item = (&mut self.inner)
+            .rev()
+            .find_map(|(id, entry)| entry.okok().map(|value| (id, value)))?;
+        self.len -= 1;
+        Some(item)
+    }
+}
+
+impl<'a, T> ExactSizeIterator for Drain<'a, T> {}
+impl<'a, T> FusedIterator for Drain<'a, T> {}
+
+/// Iterator over live slot IDs by shared reference.
+pub struct Ids<'a, T> {
+    inner: Enumerate<slice::Iter<'a, Result<T, usize>>>,
+    len: usize,
+}
+
+impl<'a, T> Iterator for Ids<'a, T> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self
+            .inner
+            .find_map(|(id, entry)| entry.is_ok().then_some(id))?;
+        self.len -= 1;
+        Some(item)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for Ids<'a, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let item = (&mut self.inner)
+            .rev()
+            .find_map(|(id, entry)| entry.is_ok().then_some(id))?;
+        self.len -= 1;
+        Some(item)
+    }
+}
+
+impl<'a, T> ExactSizeIterator for Ids<'a, T> {}
+impl<'a, T> FusedIterator for Ids<'a, T> {}
+
+/// Iterator that yields live slot IDs by value when consuming the slot map.
+pub struct IntoIds<T> {
+    inner: Enumerate<vec::IntoIter<Result<T, usize>>>,
+    len: usize,
+}
+
+impl<T> Iterator for IntoIds<T> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self
+            .inner
+            .find_map(|(id, entry)| entry.is_ok().then_some(id))?;
+        self.len -= 1;
+        Some(item)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<T> DoubleEndedIterator for IntoIds<T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let item = (&mut self.inner)
+            .rev()
+            .find_map(|(id, entry)| entry.is_ok().then_some(id))?;
+        self.len -= 1;
+        Some(item)
+    }
+}
+
+impl<T> ExactSizeIterator for IntoIds<T> {}
+impl<T> FusedIterator for IntoIds<T> {}
+
+/// Iterator over values by shared reference, without exposing IDs.
+pub struct Values<'a, T> {
+    inner: slice::Iter<'a, Result<T, usize>>,
+    len: usize,
+}
+
+impl<'a, T> Iterator for Values<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.inner.find_map(Okok::okok)?;
+        self.len -= 1;
+        Some(item)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for Values<'a, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let item = (&mut self.inner).rev().find_map(Okok::okok)?;
+        self.len -= 1;
+        Some(item)
+    }
+}
+
+impl<'a, T> ExactSizeIterator for Values<'a, T> {}
+impl<'a, T> FusedIterator for Values<'a, T> {}
+
+/// Iterator over values by mutable reference, without exposing IDs.
+pub struct ValuesMut<'a, T> {
+    inner: slice::IterMut<'a, Result<T, usize>>,
+    len: usize,
+}
+
+impl<'a, T> Iterator for ValuesMut<'a, T> {
+    type Item = &'a mut T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.inner.find_map(Okok::okok)?;
+        self.len -= 1;
+        Some(item)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<'a, T> DoubleEndedIterator for ValuesMut<'a, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let item = (&mut self.inner).rev().find_map(Okok::okok)?;
+        self.len -= 1;
+        Some(item)
+    }
+}
+
+impl<'a, T> ExactSizeIterator for ValuesMut<'a, T> {}
+impl<'a, T> FusedIterator for ValuesMut<'a, T> {}
+
+/// Iterator that yields values by value when consuming the slot map, without IDs.
+pub struct IntoValues<T> {
+    inner: vec::IntoIter<Result<T, usize>>,
+    len: usize,
+}
+
+impl<T> Iterator for IntoValues<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = self.inner.find_map(Okok::okok)?;
+        self.len -= 1;
+        Some(item)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
+    }
+}
+
+impl<T> DoubleEndedIterator for IntoValues<T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let item = (&mut self.inner).rev().find_map(Okok::okok)?;
+        self.len -= 1;
+        Some(item)
+    }
+}
+
+impl<T> ExactSizeIterator for IntoValues<T> {}
+impl<T> FusedIterator for IntoValues<T> {}

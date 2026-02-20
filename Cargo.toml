@@ -10,7 +10,6 @@ readme = "README.md"
 
 [dependencies]
 parking_lot = "0.12"
-crabtime = "1.1"
 crossbeam-utils = "0.8"
 
 [dev-dependencies]
