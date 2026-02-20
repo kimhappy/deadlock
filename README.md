@@ -1,6 +1,10 @@
 # deadlock
 Stable-ID slot map and slot heap for Rust - both single-threaded (`unsync`) and thread-safe (`sync`) variants.
 
+![crates.io](https://img.shields.io/crates/v/deadlock?style=flat-square)
+![docs.rs](https://img.shields.io/docsrs/deadlock?style=flat-square)
+![License](https://img.shields.io/github/license/kimhappy/deadlock?style=flat-square)
+
 | Type | Description |
 |---|---|
 | `unsync::SlotMap<T>` | Single-threaded slot map. O(1) insert / remove / lookup by stable ID. |
