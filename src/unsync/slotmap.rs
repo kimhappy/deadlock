@@ -1,6 +1,6 @@
 use std::{
     iter::{Enumerate, FusedIterator},
-    mem, ptr, slice, vec,
+    mem, slice, vec,
 };
 
 use crate::util::{self, Okok};
@@ -163,11 +163,10 @@ impl<T> SlotMap<T> {
     ///
     /// Both `id0` and `id1` must refer to live entries and must be distinct.
     pub unsafe fn swap_unchecked(&mut self, id0: usize, id1: usize) {
-        unsafe {
-            let ptr0 = self.entries.get_unchecked_mut(id0).okok_unchecked() as *mut _;
-            let ptr1 = self.entries.get_unchecked_mut(id1).okok_unchecked() as *mut _;
-            ptr::swap_nonoverlapping(ptr0, ptr1, 1)
-        }
+        let base = self.entries.as_mut_ptr();
+        let entry0 = unsafe { (&mut *base.add(id0)).okok_unchecked() };
+        let entry1 = unsafe { (&mut *base.add(id1)).okok_unchecked() };
+        mem::swap(entry0, entry1)
     }
 
     /// Returns an iterator over the IDs of all live entries. Time: O(1) to construct; each `next` is O(1) amortized over a full scan.
