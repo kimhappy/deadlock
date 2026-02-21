@@ -7,7 +7,7 @@ use crate::{unsync, util};
 
 /// Thread-safe min-heap with stable, reusable IDs.
 ///
-/// Elements are ordered by key `K` via [`Ord`]; each inserted `(key, value)`
+/// Elements are ordered by key `K` via [`PartialOrd`]; each inserted `(key, value)`
 /// receives a stable `usize` ID that remains valid until the element is
 /// removed. All methods take `&self`; an internal [`RwLock`] serializes
 /// concurrent mutations. Min access, key/value updates by ID, and heap repair
@@ -34,7 +34,7 @@ pub struct SlotHeap<K, V> {
 
 impl<K, V> SlotHeap<K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     /// Creates an empty `SlotHeap`. Time: O(1).
     pub fn new() -> Self {
@@ -180,7 +180,7 @@ where
 /// the guard marks the heap as dirty; on drop the heap is re-heapified.
 pub struct PeekMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     guard: RwLockWriteGuard<'a, unsync::SlotHeap<K, V>>,
     dirty: bool,
@@ -188,7 +188,7 @@ where
 
 impl<K, V> Deref for PeekMut<'_, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     type Target = (K, V);
 
@@ -199,7 +199,7 @@ where
 
 impl<K, V> DerefMut for PeekMut<'_, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
@@ -209,7 +209,7 @@ where
 
 impl<K, V> Drop for PeekMut<'_, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn drop(&mut self) {
         if self.dirty {
@@ -222,7 +222,7 @@ where
 /// the heap as dirty; on drop the heap is re-heapified.
 pub struct PeekKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     guard: RwLockWriteGuard<'a, unsync::SlotHeap<K, V>>,
     dirty: bool,
@@ -230,7 +230,7 @@ where
 
 impl<K, V> Deref for PeekKeyMut<'_, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     type Target = K;
 
@@ -241,7 +241,7 @@ where
 
 impl<K, V> DerefMut for PeekKeyMut<'_, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
@@ -251,7 +251,7 @@ where
 
 impl<K, V> Drop for PeekKeyMut<'_, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn drop(&mut self) {
         if self.dirty {
@@ -265,7 +265,7 @@ where
 /// re-heapified.
 pub struct RefMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     guard: RwLockWriteGuard<'a, unsync::SlotHeap<K, V>>,
     index: usize,
@@ -274,7 +274,7 @@ where
 
 impl<K, V> Deref for RefMut<'_, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     type Target = (K, V);
 
@@ -285,7 +285,7 @@ where
 
 impl<K, V> DerefMut for RefMut<'_, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
@@ -295,7 +295,7 @@ where
 
 impl<K, V> Drop for RefMut<'_, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn drop(&mut self) {
         if self.dirty {
@@ -308,7 +308,7 @@ where
 /// the guard marks the heap as dirty; on drop the heap is re-heapified.
 pub struct RefKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     guard: RwLockWriteGuard<'a, unsync::SlotHeap<K, V>>,
     index: usize,
@@ -317,7 +317,7 @@ where
 
 impl<K, V> Deref for RefKeyMut<'_, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     type Target = K;
 
@@ -328,7 +328,7 @@ where
 
 impl<K, V> DerefMut for RefKeyMut<'_, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
@@ -338,7 +338,7 @@ where
 
 impl<K, V> Drop for RefKeyMut<'_, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn drop(&mut self) {
         if self.dirty {
@@ -349,7 +349,7 @@ where
 
 impl<K, V> Default for SlotHeap<K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn default() -> Self {
         Self::new()

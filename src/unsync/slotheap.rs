@@ -7,7 +7,7 @@ use crate::{unsync::SlotMap, util};
 
 /// Single-threaded min-heap with stable, reusable IDs.
 ///
-/// Elements are ordered by key `K` via [`Ord`]; each inserted `(key, value)`
+/// Elements are ordered by key `K` via [`PartialOrd`]; each inserted `(key, value)`
 /// receives a stable `usize` ID that remains valid until the element is
 /// removed. Min access, key/value updates by ID, and heap repair after key
 /// changes are provided via guard types ([`PeekMut`], [`PeekKeyMut`],
@@ -43,7 +43,7 @@ struct Entry<K, V> {
 
 impl<K, V> SlotHeap<K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     /// Creates an empty `SlotHeap`. Time: O(1).
     pub fn new() -> Self {
@@ -300,7 +300,7 @@ where
 
 impl<K, V> Default for SlotHeap<K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn default() -> Self {
         Self::new()
@@ -309,18 +309,18 @@ where
 
 impl<K, V> PartialEq for Entry<K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl<K, V> Eq for Entry<K, V> where K: Ord {}
+impl<K, V> Eq for Entry<K, V> where K: PartialOrd {}
 
 impl<K, V> PartialOrd for Entry<K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
@@ -329,13 +329,14 @@ where
 
 impl<K, V> Ord for Entry<K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn cmp(&self, other: &Self) -> Ordering {
+        let id_cmp = || self.id.cmp(&other.id);
         self.item
             .0
-            .cmp(&other.item.0)
-            .then_with(|| self.id.cmp(&other.id))
+            .partial_cmp(&other.item.0)
+            .map_or_else(id_cmp, |ordering| ordering.then_with(id_cmp))
     }
 }
 
@@ -343,7 +344,7 @@ where
 /// the guard marks the heap as dirty; on drop the heap is re-heapified.
 pub struct PeekMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     dirty: bool,
     from: &'a mut SlotHeap<K, V>,
@@ -351,7 +352,7 @@ where
 
 impl<'a, K, V> Deref for PeekMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     type Target = (K, V);
 
@@ -362,7 +363,7 @@ where
 
 impl<'a, K, V> DerefMut for PeekMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
@@ -372,7 +373,7 @@ where
 
 impl<'a, K, V> AsRef<(K, V)> for PeekMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn as_ref(&self) -> &(K, V) {
         self.deref()
@@ -381,7 +382,7 @@ where
 
 impl<'a, K, V> AsMut<(K, V)> for PeekMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn as_mut(&mut self) -> &mut (K, V) {
         self.deref_mut()
@@ -390,7 +391,7 @@ where
 
 impl<'a, K, V> Drop for PeekMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn drop(&mut self) {
         if self.dirty {
@@ -403,7 +404,7 @@ where
 /// the heap as dirty; on drop the heap is re-heapified.
 pub struct PeekKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     dirty: bool,
     from: &'a mut SlotHeap<K, V>,
@@ -411,7 +412,7 @@ where
 
 impl<'a, K, V> Deref for PeekKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     type Target = K;
 
@@ -422,7 +423,7 @@ where
 
 impl<'a, K, V> DerefMut for PeekKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
@@ -432,7 +433,7 @@ where
 
 impl<'a, K, V> AsRef<K> for PeekKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn as_ref(&self) -> &K {
         self.deref()
@@ -441,7 +442,7 @@ where
 
 impl<'a, K, V> AsMut<K> for PeekKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn as_mut(&mut self) -> &mut K {
         self.deref_mut()
@@ -450,7 +451,7 @@ where
 
 impl<'a, K, V> Drop for PeekKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn drop(&mut self) {
         if self.dirty {
@@ -464,7 +465,7 @@ where
 /// re-heapified.
 pub struct RefMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     dirty: bool,
     from: &'a mut SlotHeap<K, V>,
@@ -473,7 +474,7 @@ where
 
 impl<'a, K, V> Deref for RefMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     type Target = (K, V);
 
@@ -484,7 +485,7 @@ where
 
 impl<'a, K, V> DerefMut for RefMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
@@ -494,7 +495,7 @@ where
 
 impl<'a, K, V> AsRef<(K, V)> for RefMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn as_ref(&self) -> &(K, V) {
         self.deref()
@@ -503,7 +504,7 @@ where
 
 impl<'a, K, V> AsMut<(K, V)> for RefMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn as_mut(&mut self) -> &mut (K, V) {
         self.deref_mut()
@@ -512,7 +513,7 @@ where
 
 impl<'a, K, V> Drop for RefMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn drop(&mut self) {
         if self.dirty {
@@ -525,7 +526,7 @@ where
 /// the guard marks the heap as dirty; on drop the heap is re-heapified.
 pub struct RefKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     dirty: bool,
     from: &'a mut SlotHeap<K, V>,
@@ -534,7 +535,7 @@ where
 
 impl<'a, K, V> Deref for RefKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     type Target = K;
 
@@ -545,7 +546,7 @@ where
 
 impl<'a, K, V> DerefMut for RefKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
@@ -555,7 +556,7 @@ where
 
 impl<'a, K, V> AsRef<K> for RefKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn as_ref(&self) -> &K {
         self.deref()
@@ -564,7 +565,7 @@ where
 
 impl<'a, K, V> AsMut<K> for RefKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn as_mut(&mut self) -> &mut K {
         self.deref_mut()
@@ -573,7 +574,7 @@ where
 
 impl<'a, K, V> Drop for RefKeyMut<'a, K, V>
 where
-    K: Ord,
+    K: PartialOrd,
 {
     fn drop(&mut self) {
         if self.dirty {
