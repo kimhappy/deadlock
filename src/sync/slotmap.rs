@@ -3,6 +3,7 @@ use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
 use std::{
+    iter,
     mem::{self, ManuallyDrop},
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -54,8 +55,8 @@ impl<T> SlotMap<T> {
     /// if `num_shards` is not a power of two or is less than 4.
     /// Time: O(num_shards).
     pub fn with_num_shards(num_shards: usize) -> Option<Self> {
-        (num_shards.is_power_of_two() && num_shards >= 4)
-            .then(|| unsafe { Self::with_num_shards_unchecked(num_shards) })
+        util::ensure!(num_shards.is_power_of_two() && num_shards >= 4);
+        Some(unsafe { Self::with_num_shards_unchecked(num_shards) })
     }
 
     /// Creates a new `SlotMap` with exactly `num_shards` shards without
@@ -66,14 +67,14 @@ impl<T> SlotMap<T> {
     /// `num_shards` must be a power of two and at least 4.
     pub unsafe fn with_num_shards_unchecked(num_shards: usize) -> Self {
         Self {
-            shards: (0..num_shards)
-                .map(|_| {
-                    CachePadded::new(Shard {
-                        inner: RwLock::new(unsync::SlotMap::new()),
-                        len: AtomicUsize::new(0),
-                    })
+            shards: iter::repeat_with(|| {
+                CachePadded::new(Shard {
+                    inner: RwLock::new(unsync::SlotMap::new()),
+                    len: AtomicUsize::new(0),
                 })
-                .collect(),
+            })
+            .take(num_shards)
+            .collect(),
             rr: AtomicUsize::new(0),
         }
     }
@@ -106,7 +107,7 @@ impl<T> SlotMap<T> {
         for shard in self.shards.iter() {
             let mut inner = shard.inner.write();
             inner.clear();
-            shard.len.store(0, Ordering::Relaxed);
+            shard.len.store(0, Ordering::Relaxed)
         }
     }
 
@@ -204,7 +205,7 @@ impl<T> SlotMap<T> {
         let mut guard = shard.inner.write();
         let value = guard.remove(id)?;
         shard.len.fetch_sub(1, Ordering::Relaxed);
-        value.into()
+        Some(value)
     }
 
     /// Removes the entry at `id` and returns its value without liveness
@@ -244,15 +245,16 @@ impl<T> SlotMap<T> {
 
             if (shard_index0 < shard_index1) ^ reverse {
                 guard0 = shard0.inner.write();
-                guard1 = shard1.inner.write();
+                guard1 = shard1.inner.write()
             } else {
                 guard1 = shard1.inner.write();
-                guard0 = shard0.inner.write();
+                guard0 = shard0.inner.write()
             }
 
             let elem0 = guard0.get_mut(id0)?;
             let elem1 = guard1.get_mut(id1)?;
-            mem::swap(elem0, elem1).into()
+            mem::swap(elem0, elem1);
+            Some(())
         }
     }
 
@@ -279,10 +281,10 @@ impl<T> SlotMap<T> {
 
             if (shard_index0 < shard_index1) ^ reverse {
                 guard0 = shard0.inner.write();
-                guard1 = shard1.inner.write();
+                guard1 = shard1.inner.write()
             } else {
                 guard1 = shard1.inner.write();
-                guard0 = shard0.inner.write();
+                guard0 = shard0.inner.write()
             }
 
             let elem0 = unsafe { guard0.get_unchecked_mut(id0) };

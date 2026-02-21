@@ -6,12 +6,6 @@ macro_rules! __ensure {
             return None;
         }
     };
-
-    ($condition:expr, $value:expr) => {
-        if !$condition {
-            return $value;
-        }
-    };
 }
 
 pub use __ensure as ensure;

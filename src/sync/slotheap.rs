@@ -45,7 +45,7 @@ where
 
     /// Removes all elements and resets internal state. Time: O(n).
     pub fn clear(&self) {
-        self.inner.write().clear();
+        self.inner.write().clear()
     }
 
     /// Returns the number of live elements. Time: O(1).

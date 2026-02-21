@@ -56,7 +56,7 @@ where
     /// Removes all elements and resets internal state. Time: O(n).
     pub fn clear(&mut self) {
         self.entries.clear();
-        self.indices.clear();
+        self.indices.clear()
     }
 
     /// Returns the number of live elements. Time: O(1).
@@ -89,9 +89,7 @@ where
     /// Removes and returns the minimum-key element, or `None` if the heap is
     /// empty. Time: O(log n).
     pub fn pop(&mut self) -> Option<(K, V)> {
-        if self.entries.is_empty() {
-            return None;
-        }
+        util::ensure!(!self.entries.is_empty());
 
         if self.entries.len() == 1 {
             self.indices.clear();
@@ -107,7 +105,7 @@ where
             entry.item
         };
 
-        unsafe { self.heapify_down(0) };
+        unsafe { self.heapify_down(0) }
         Some(item)
     }
 
@@ -129,7 +127,7 @@ where
             entry.item
         };
 
-        unsafe { self.heapify(index) };
+        unsafe { self.heapify(index) }
         Some(item)
     }
 
@@ -153,10 +151,7 @@ where
     /// If the guard is mutated, the heap invariant is restored on drop.
     /// Time: O(1) to create; drop may run O(log n) heapify.
     pub fn peek_mut(&mut self) -> Option<PeekMut<'_, K, V>> {
-        if self.entries.is_empty() {
-            return None;
-        }
-
+        util::ensure!(!self.entries.is_empty());
         Some(PeekMut {
             dirty: false,
             from: self,
@@ -168,7 +163,6 @@ where
     /// Time: O(1) to create; drop may run O(log n) heapify.
     pub fn peek_key_mut(&mut self) -> Option<PeekKeyMut<'_, K, V>> {
         util::ensure!(!self.entries.is_empty());
-
         Some(PeekKeyMut {
             dirty: false,
             from: self,
@@ -233,14 +227,14 @@ where
 
     pub(crate) unsafe fn heapify(&mut self, now: usize) {
         let now = unsafe { self.heapify_up(now) };
-        unsafe { self.heapify_down(now) };
+        unsafe { self.heapify_down(now) }
     }
 
     unsafe fn heapify_up(&mut self, mut now: usize) -> usize {
         unsafe {
             while let Some(up) = self.next_up(now) {
                 self.swap_entries(now, up);
-                now = up;
+                now = up
             }
         }
 
@@ -251,7 +245,7 @@ where
         unsafe {
             while let Some(down) = self.next_down(now) {
                 self.swap_entries(now, down);
-                now = down;
+                now = down
             }
         }
     }
@@ -287,7 +281,7 @@ where
             let id0 = self.entries.get_unchecked(index0).id;
             let id1 = self.entries.get_unchecked(index1).id;
             *self.indices.get_unchecked_mut(id0) = index0;
-            *self.indices.get_unchecked_mut(id1) = index1;
+            *self.indices.get_unchecked_mut(id1) = index1
         }
     }
 

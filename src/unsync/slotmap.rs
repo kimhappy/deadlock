@@ -104,10 +104,8 @@ impl<T> SlotMap<T> {
             self.entries.push(Ok(value));
             id + 1
         } else {
-            unsafe {
-                let entry = self.entries.get_unchecked_mut(id);
-                mem::replace(entry, Ok(value)).unwrap_err_unchecked()
-            }
+            let entry = unsafe { self.entries.get_unchecked_mut(id) };
+            unsafe { mem::replace(entry, Ok(value)).unwrap_err_unchecked() }
         };
 
         id
@@ -128,7 +126,7 @@ impl<T> SlotMap<T> {
     /// not a live entry. Time: O(1).
     pub fn remove(&mut self, id: usize) -> Option<T> {
         util::ensure!(self.contains(id));
-        unsafe { self.remove_unchecked(id) }.into()
+        Some(unsafe { self.remove_unchecked(id) })
     }
 
     /// Removes the entry at `id` and returns its value without liveness
@@ -139,11 +137,9 @@ impl<T> SlotMap<T> {
     /// `id` must refer to a live entry.
     pub unsafe fn remove_unchecked(&mut self, id: usize) -> T {
         self.len -= 1;
-        let value = unsafe {
-            let new_entry = Err(self.next);
-            let entry = self.entries.get_unchecked_mut(id);
-            mem::replace(entry, new_entry).unwrap_unchecked()
-        };
+        let new_entry = Err(self.next);
+        let entry = unsafe { self.entries.get_unchecked_mut(id) };
+        let value = unsafe { mem::replace(entry, new_entry).unwrap_unchecked() };
         self.next = id;
         value
     }
@@ -156,7 +152,8 @@ impl<T> SlotMap<T> {
         if id0 != id1 {
             unsafe { self.swap_unchecked(id0, id1) }
         }
-        .into()
+
+        Some(())
     }
 
     /// Swaps the values at `id0` and `id1` in-place without liveness checking.
@@ -263,7 +260,7 @@ impl<T> SlotMap<T> {
     pub(crate) unsafe fn commit_lazy_insert(&mut self, id: usize, value: T) {
         let entry = unsafe { self.entries.get_unchecked_mut(id) };
         *entry = Ok(value);
-        self.len += 1;
+        self.len += 1
     }
 
     pub(crate) unsafe fn drop_lazy_insert(&mut self, id: usize) {
