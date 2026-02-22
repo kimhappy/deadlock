@@ -3,7 +3,7 @@ use std::{
     mem, slice, vec,
 };
 
-use crate::util::{self, Okok};
+use crate::util::Okok;
 
 /// Single-threaded slot map with stable, reusable IDs.
 ///
@@ -44,7 +44,7 @@ impl<T> SlotMap<T> {
     pub fn clear(&mut self) {
         self.entries.clear();
         self.len = 0;
-        self.next = 0;
+        self.next = 0
     }
 
     /// Returns the number of live entries. Time: O(1).
@@ -104,8 +104,10 @@ impl<T> SlotMap<T> {
             self.entries.push(Ok(value));
             id + 1
         } else {
-            let entry = unsafe { self.entries.get_unchecked_mut(id) };
-            unsafe { mem::replace(entry, Ok(value)).unwrap_err_unchecked() }
+            unsafe {
+                let entry = self.entries.get_unchecked_mut(id);
+                mem::replace(entry, Ok(value)).unwrap_err_unchecked()
+            }
         };
 
         id
@@ -125,8 +127,8 @@ impl<T> SlotMap<T> {
     /// Removes the entry at `id` and returns its value, or `None` if `id` is
     /// not a live entry. Time: O(1).
     pub fn remove(&mut self, id: usize) -> Option<T> {
-        util::ensure!(self.contains(id));
-        Some(unsafe { self.remove_unchecked(id) })
+        self.contains(id)
+            .then(|| unsafe { self.remove_unchecked(id) })
     }
 
     /// Removes the entry at `id` and returns its value without liveness
@@ -136,9 +138,9 @@ impl<T> SlotMap<T> {
     ///
     /// `id` must refer to a live entry.
     pub unsafe fn remove_unchecked(&mut self, id: usize) -> T {
-        self.len -= 1;
-        let new_entry = Err(self.next);
         let entry = unsafe { self.entries.get_unchecked_mut(id) };
+        let new_entry = Err(self.next);
+        self.len -= 1;
         let value = unsafe { mem::replace(entry, new_entry).unwrap_unchecked() };
         self.next = id;
         value
@@ -147,7 +149,9 @@ impl<T> SlotMap<T> {
     /// Swaps the values at `id0` and `id1` in-place. Returns `None` if either
     /// ID is not a live entry. Time: O(1).
     pub fn swap(&mut self, id0: usize, id1: usize) -> Option<()> {
-        util::ensure!(self.contains(id0) && self.contains(id1));
+        if !self.contains(id0) || !self.contains(id1) {
+            return None;
+        }
 
         if id0 != id1 {
             unsafe { self.swap_unchecked(id0, id1) }
@@ -249,8 +253,10 @@ impl<T> SlotMap<T> {
             self.entries.push(Err(usize::MAX));
             id + 1
         } else {
-            let entry = unsafe { self.entries.get_unchecked_mut(id) };
-            mem::replace(unsafe { entry.as_mut().unwrap_err_unchecked() }, usize::MAX)
+            unsafe {
+                let entry = self.entries.get_unchecked_mut(id);
+                mem::replace(entry.as_mut().unwrap_err_unchecked(), usize::MAX)
+            }
         };
 
         id
@@ -283,7 +289,7 @@ pub struct LazyInsert<'a, T> {
     id: usize,
 }
 
-impl<'a, T> LazyInsert<'a, T> {
+impl<T> LazyInsert<'_, T> {
     /// Stores `value` in the reserved slot and makes it live. Consumes the guard
     /// so that drop does not run and the slot is not freed.
     pub fn commit(self, value: T) {
@@ -292,7 +298,7 @@ impl<'a, T> LazyInsert<'a, T> {
     }
 }
 
-impl<'a, T> Drop for LazyInsert<'a, T> {
+impl<T> Drop for LazyInsert<'_, T> {
     fn drop(&mut self) {
         unsafe { self.from.drop_lazy_insert(self.id) }
     }

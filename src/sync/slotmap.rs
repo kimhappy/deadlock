@@ -55,8 +55,8 @@ impl<T> SlotMap<T> {
     /// if `num_shards` is not a power of two or is less than 4.
     /// Time: O(num_shards).
     pub fn with_num_shards(num_shards: usize) -> Option<Self> {
-        util::ensure!(num_shards.is_power_of_two() && num_shards >= 4);
-        Some(unsafe { Self::with_num_shards_unchecked(num_shards) })
+        (num_shards.is_power_of_two() && num_shards >= 4)
+            .then(|| unsafe { Self::with_num_shards_unchecked(num_shards) })
     }
 
     /// Creates a new `SlotMap` with exactly `num_shards` shards without
@@ -184,6 +184,7 @@ impl<T> SlotMap<T> {
     pub fn lazy_insert(&self) -> (usize, LazyInsert<'_, T>) {
         let shard_index = self.select_shard();
         let shard = unsafe { self.shards.get_unchecked(shard_index) };
+
         let mut guard = shard.inner.write();
         let id = guard.prepare_lazy_insert();
         (
@@ -225,37 +226,91 @@ impl<T> SlotMap<T> {
     }
 
     /// Swaps the values at `id0` and `id1` in-place. Returns `None` if either
-    /// ID is not a live entry. When the IDs belong to different shards, two
-    /// write locks are acquired; `reverse` controls lock order—use a consistent
-    /// value per shard pair to avoid deadlock. Time: O(1).
-    pub fn swap(&self, id0: usize, id1: usize, reverse: bool) -> Option<()> {
+    /// ID is not a live entry or refers to a different shard's out-of-range slot.
+    /// When the two IDs are in different shards, lock order is unspecified;
+    /// for concurrent cross-shard swaps prefer [`swap_ascending`][Self::swap_ascending]
+    /// to avoid deadlock. Time: O(1).
+    pub fn swap(&self, id0: usize, id1: usize) -> Option<()> {
         let (shard_index0, id0) = self.split(id0);
         let (shard_index1, id1) = self.split(id1);
 
         if shard_index0 == shard_index1 {
             let shard = self.shards.get(shard_index0)?;
             let mut guard = shard.inner.write();
-            guard.swap(id0, id1)
-        } else {
-            let shard0 = self.shards.get(shard_index0)?;
-            let shard1 = self.shards.get(shard_index1)?;
-
-            let mut guard0;
-            let mut guard1;
-
-            if (shard_index0 < shard_index1) ^ reverse {
-                guard0 = shard0.inner.write();
-                guard1 = shard1.inner.write()
-            } else {
-                guard1 = shard1.inner.write();
-                guard0 = shard0.inner.write()
-            }
-
-            let elem0 = guard0.get_mut(id0)?;
-            let elem1 = guard1.get_mut(id1)?;
-            mem::swap(elem0, elem1);
-            Some(())
+            return guard.swap(id0, id1);
         }
+
+        let shard0 = self.shards.get(shard_index0)?;
+        let shard1 = self.shards.get(shard_index1)?;
+
+        let mut guard0 = shard0.inner.write();
+        let mut guard1 = shard1.inner.write();
+
+        let elem0 = guard0.get_mut(id0)?;
+        let elem1 = guard1.get_mut(id1)?;
+        mem::swap(elem0, elem1);
+        Some(())
+    }
+
+    /// Like [`swap`][Self::swap] but acquires shard locks in ascending index
+    /// order. Use when all callers use ascending order to avoid deadlock.
+    /// Returns `None` if either ID is not live. Time: O(1).
+    pub fn swap_ascending(&self, id0: usize, id1: usize) -> Option<()> {
+        let (mut shard_index0, mut id0) = self.split(id0);
+        let (mut shard_index1, mut id1) = self.split(id1);
+
+        if shard_index0 == shard_index1 {
+            let shard = self.shards.get(shard_index0)?;
+            let mut guard = shard.inner.write();
+            return guard.swap(id0, id1);
+        }
+
+        if shard_index1 < shard_index0 {
+            mem::swap(&mut shard_index0, &mut shard_index1);
+            mem::swap(&mut id0, &mut id1);
+        }
+
+        let shard0 = self.shards.get(shard_index0)?;
+        let shard1 = self.shards.get(shard_index1)?;
+
+        let mut guard0 = shard0.inner.write();
+        let mut guard1 = shard1.inner.write();
+
+        let elem0 = guard0.get_mut(id0)?;
+        let elem1 = guard1.get_mut(id1)?;
+        mem::swap(elem0, elem1);
+        Some(())
+    }
+
+    /// Like [`swap`][Self::swap] but acquires shard locks in descending index
+    /// order. Do not mix with [`swap_ascending`][Self::swap_ascending] from other
+    /// threads or deadlock may occur. Returns `None` if either ID is not live.
+    /// Time: O(1).
+    pub fn swap_descending(&self, id0: usize, id1: usize) -> Option<()> {
+        let (mut shard_index0, mut id0) = self.split(id0);
+        let (mut shard_index1, mut id1) = self.split(id1);
+
+        if shard_index0 == shard_index1 {
+            let shard = self.shards.get(shard_index0)?;
+            let mut guard = shard.inner.write();
+            return guard.swap(id0, id1);
+        }
+
+        if shard_index0 < shard_index1 {
+            mem::swap(&mut shard_index0, &mut shard_index1);
+            mem::swap(&mut id0, &mut id1);
+        }
+
+        let shard0 = self.shards.get(shard_index0)?;
+        let shard1 = self.shards.get(shard_index1)?;
+
+        let mut guard0 = shard0.inner.write();
+        let mut guard1 = shard1.inner.write();
+
+        let elem0 = guard0.get_mut(id0)?;
+        let elem1 = guard1.get_mut(id1)?;
+        mem::swap(elem0, elem1);
+        Some(())
     }
 
     /// Swaps the values at `id0` and `id1` in-place without liveness checking.
@@ -264,33 +319,89 @@ impl<T> SlotMap<T> {
     /// # Safety
     ///
     /// Both `id0` and `id1` must refer to live entries.
-    pub unsafe fn swap_unchecked(&self, id0: usize, id1: usize, reverse: bool) {
+    pub unsafe fn swap_unchecked(&self, id0: usize, id1: usize) {
         let (shard_index0, id0) = self.split(id0);
         let (shard_index1, id1) = self.split(id1);
 
         if shard_index0 == shard_index1 {
             let shard = unsafe { self.shards.get_unchecked(shard_index0) };
             let mut guard = shard.inner.write();
-            unsafe { guard.swap_unchecked(id0, id1) }
-        } else {
-            let shard0 = unsafe { self.shards.get_unchecked(shard_index0) };
-            let shard1 = unsafe { self.shards.get_unchecked(shard_index1) };
-
-            let mut guard0;
-            let mut guard1;
-
-            if (shard_index0 < shard_index1) ^ reverse {
-                guard0 = shard0.inner.write();
-                guard1 = shard1.inner.write()
-            } else {
-                guard1 = shard1.inner.write();
-                guard0 = shard0.inner.write()
-            }
-
-            let elem0 = unsafe { guard0.get_unchecked_mut(id0) };
-            let elem1 = unsafe { guard1.get_unchecked_mut(id1) };
-            mem::swap(elem0, elem1)
+            return unsafe { guard.swap_unchecked(id0, id1) };
         }
+
+        let shard0 = unsafe { self.shards.get_unchecked(shard_index0) };
+        let shard1 = unsafe { self.shards.get_unchecked(shard_index1) };
+
+        let mut guard0 = shard0.inner.write();
+        let mut guard1 = shard1.inner.write();
+
+        let elem0 = unsafe { guard0.get_unchecked_mut(id0) };
+        let elem1 = unsafe { guard1.get_unchecked_mut(id1) };
+        mem::swap(elem0, elem1)
+    }
+
+    /// Like [`swap_unchecked`][Self::swap_unchecked] but acquires shard locks
+    /// in ascending index order.
+    ///
+    /// # Safety
+    ///
+    /// Both `id0` and `id1` must refer to live entries.
+    pub unsafe fn swap_ascending_unchecked(&self, id0: usize, id1: usize) {
+        let (mut shard_index0, mut id0) = self.split(id0);
+        let (mut shard_index1, mut id1) = self.split(id1);
+
+        if shard_index0 == shard_index1 {
+            let shard = unsafe { self.shards.get_unchecked(shard_index0) };
+            let mut guard = shard.inner.write();
+            return unsafe { guard.swap_unchecked(id0, id1) };
+        }
+
+        if shard_index1 < shard_index0 {
+            mem::swap(&mut shard_index0, &mut shard_index1);
+            mem::swap(&mut id0, &mut id1);
+        }
+
+        let shard0 = unsafe { self.shards.get_unchecked(shard_index0) };
+        let shard1 = unsafe { self.shards.get_unchecked(shard_index1) };
+
+        let mut guard0 = shard0.inner.write();
+        let mut guard1 = shard1.inner.write();
+
+        let elem0 = unsafe { guard0.get_unchecked_mut(id0) };
+        let elem1 = unsafe { guard1.get_unchecked_mut(id1) };
+        mem::swap(elem0, elem1)
+    }
+
+    /// Like [`swap_unchecked`][Self::swap_unchecked] but acquires shard locks
+    /// in descending index order.
+    ///
+    /// # Safety
+    ///
+    /// Both `id0` and `id1` must refer to live entries.
+    pub unsafe fn swap_descending_unchecked(&self, id0: usize, id1: usize) {
+        let (mut shard_index0, mut id0) = self.split(id0);
+        let (mut shard_index1, mut id1) = self.split(id1);
+
+        if shard_index0 == shard_index1 {
+            let shard = unsafe { self.shards.get_unchecked(shard_index0) };
+            let mut guard = shard.inner.write();
+            return unsafe { guard.swap_unchecked(id0, id1) };
+        }
+
+        if shard_index0 < shard_index1 {
+            mem::swap(&mut shard_index0, &mut shard_index1);
+            mem::swap(&mut id0, &mut id1);
+        }
+
+        let shard0 = unsafe { self.shards.get_unchecked(shard_index0) };
+        let shard1 = unsafe { self.shards.get_unchecked(shard_index1) };
+
+        let mut guard0 = shard0.inner.write();
+        let mut guard1 = shard1.inner.write();
+
+        let elem0 = unsafe { guard0.get_unchecked_mut(id0) };
+        let elem1 = unsafe { guard1.get_unchecked_mut(id1) };
+        mem::swap(elem0, elem1)
     }
 
     fn select_shard(&self) -> usize {
@@ -335,22 +446,25 @@ pub struct LazyInsert<'a, T> {
     id: usize,
 }
 
-impl<'a, T> LazyInsert<'a, T> {
+impl<T> LazyInsert<'_, T> {
     /// Stores `value` in the reserved slot and makes it live. Consumes the guard
     /// so that drop does not run and the slot is not freed.
     pub fn commit(mut self, value: T) {
-        unsafe { self.guard.commit_lazy_insert(self.id, value) };
+        unsafe {
+            let mut guard = ManuallyDrop::take(&mut self.guard);
+            guard.commit_lazy_insert(self.id, value)
+        }
+
         self.shard.len.fetch_add(1, Ordering::Relaxed);
-        unsafe { ManuallyDrop::drop(&mut self.guard) }
         mem::forget(self)
     }
 }
 
-impl<'a, T> Drop for LazyInsert<'a, T> {
+impl<T> Drop for LazyInsert<'_, T> {
     fn drop(&mut self) {
         unsafe {
-            self.guard.drop_lazy_insert(self.id);
-            ManuallyDrop::drop(&mut self.guard)
+            let mut guard = ManuallyDrop::take(&mut self.guard);
+            guard.drop_lazy_insert(self.id)
         }
     }
 }

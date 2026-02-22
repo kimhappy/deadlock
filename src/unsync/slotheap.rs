@@ -1,5 +1,6 @@
 use std::{
     cmp::Ordering,
+    mem,
     ops::{Deref, DerefMut},
 };
 
@@ -78,10 +79,11 @@ where
     /// Time: O(log n).
     pub fn insert(&mut self, key: K, value: V) -> usize {
         let id = self.indices.insert(self.entries.len());
-        self.entries.push(Entry {
+        let entry = Entry {
             item: (key, value),
             id,
-        });
+        };
+        self.entries.push(entry);
         unsafe { self.heapify_up(self.entries.len() - 1) };
         id
     }
@@ -89,46 +91,61 @@ where
     /// Removes and returns the minimum-key element, or `None` if the heap is
     /// empty. Time: O(log n).
     pub fn pop(&mut self) -> Option<(K, V)> {
-        util::ensure!(!self.entries.is_empty());
+        (!self.entries.is_empty()).then(|| unsafe { self.pop_unchecked() })
+    }
 
+    /// Removes and returns the minimum-key element without checking that the
+    /// heap is non-empty. Time: O(log n).
+    ///
+    /// # Safety
+    ///
+    /// The heap must not be empty. Calling this on an empty heap is undefined
+    /// behavior.
+    pub unsafe fn pop_unchecked(&mut self) -> (K, V) {
         if self.entries.len() == 1 {
             self.indices.clear();
-            return Some(unsafe { self.entries.pop().unwrap_unchecked().item });
+            return unsafe { self.entries.pop().unwrap_unchecked().item };
         }
 
-        let item = unsafe {
+        unsafe {
             let entry = util::swap_remove_unchecked(&mut self.entries, 0);
             self.indices.remove_unchecked(entry.id);
-            *self
-                .indices
-                .get_unchecked_mut(self.entries.get_unchecked(0).id) = 0;
+            let id = self.entries.get_unchecked(0).id;
+            *self.indices.get_unchecked_mut(id) = 0;
+            self.heapify_down(0);
             entry.item
-        };
-
-        unsafe { self.heapify_down(0) }
-        Some(item)
+        }
     }
 
     /// Removes the element with the given `id` and returns `(key, value)`, or
     /// `None` if `id` is not a live element. Time: O(log n).
     pub fn remove(&mut self, id: usize) -> Option<(K, V)> {
-        let index = self.indices.remove(id)?;
+        self.contains(id)
+            .then(|| unsafe { self.remove_unchecked(id) })
+    }
+
+    /// Removes the element with the given `id` and returns `(key, value)`
+    /// without checking that `id` is live. Time: O(log n).
+    ///
+    /// # Safety
+    ///
+    /// `id` must refer to a live element. Using an invalid or reused `id` is
+    /// undefined behavior.
+    pub unsafe fn remove_unchecked(&mut self, id: usize) -> (K, V) {
+        let index = unsafe { self.indices.remove_unchecked(id) };
         let len = self.entries.len();
 
         if index == len - 1 {
-            return Some(unsafe { self.entries.pop().unwrap_unchecked().item });
+            return unsafe { self.entries.pop().unwrap_unchecked().item };
         }
 
-        let item = unsafe {
+        unsafe {
             let entry = util::swap_remove_unchecked(&mut self.entries, index);
-            *self
-                .indices
-                .get_unchecked_mut(self.entries.get_unchecked(index).id) = index;
+            let id = self.entries.get_unchecked(index).id;
+            *self.indices.get_unchecked_mut(id) = index;
+            self.heapify(index);
             entry.item
-        };
-
-        unsafe { self.heapify(index) }
-        Some(item)
+        }
     }
 
     /// Returns a shared reference to the minimum element's `(key, value)` pair.
@@ -137,9 +154,29 @@ where
         self.entries.first().map(|item| &item.item)
     }
 
+    /// Returns a shared reference to the minimum element's `(key, value)` pair
+    /// without checking that the heap is non-empty. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// The heap must not be empty.
+    pub unsafe fn peek_unchecked(&self) -> &(K, V) {
+        unsafe { &self.entries.get_unchecked(0).item }
+    }
+
     /// Returns a shared reference to the minimum element's key. Time: O(1).
     pub fn peek_key(&self) -> Option<&K> {
         self.entries.first().map(|item| &item.item.0)
+    }
+
+    /// Returns a shared reference to the minimum element's key without
+    /// checking that the heap is non-empty. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// The heap must not be empty.
+    pub unsafe fn peek_unchecked_key(&self) -> &K {
+        unsafe { &self.entries.get_unchecked(0).item.0 }
     }
 
     /// Returns a shared reference to the minimum element's value. Time: O(1).
@@ -147,87 +184,199 @@ where
         self.entries.first().map(|item| &item.item.1)
     }
 
+    /// Returns a shared reference to the minimum element's value without
+    /// checking that the heap is non-empty. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// The heap must not be empty.
+    pub unsafe fn peek_unchecked_value(&self) -> &V {
+        unsafe { &self.entries.get_unchecked(0).item.1 }
+    }
+
     /// Returns an exclusive guard over the minimum element's `(key, value)` pair.
     /// If the guard is mutated, the heap invariant is restored on drop.
     /// Time: O(1) to create; drop may run O(log n) heapify.
     pub fn peek_mut(&mut self) -> Option<PeekMut<'_, K, V>> {
-        util::ensure!(!self.entries.is_empty());
-        Some(PeekMut {
+        (!self.entries.is_empty()).then(move || unsafe { self.peek_unchecked_mut() })
+    }
+
+    /// Returns an exclusive guard over the minimum element's `(key, value)` pair
+    /// without checking that the heap is non-empty. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// The heap must not be empty.
+    pub unsafe fn peek_unchecked_mut(&mut self) -> PeekMut<'_, K, V> {
+        PeekMut {
             dirty: false,
             from: self,
-        })
+        }
     }
 
     /// Returns an exclusive guard over the minimum element's key. If the key
     /// is modified, the heap invariant is restored on drop.
     /// Time: O(1) to create; drop may run O(log n) heapify.
     pub fn peek_key_mut(&mut self) -> Option<PeekKeyMut<'_, K, V>> {
-        util::ensure!(!self.entries.is_empty());
-        Some(PeekKeyMut {
+        (!self.entries.is_empty()).then(move || unsafe { self.peek_unchecked_key_mut() })
+    }
+
+    /// Returns an exclusive guard over the minimum element's key without
+    /// checking that the heap is non-empty. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// The heap must not be empty.
+    pub unsafe fn peek_unchecked_key_mut(&mut self) -> PeekKeyMut<'_, K, V> {
+        PeekKeyMut {
             dirty: false,
             from: self,
-        })
+        }
     }
 
     /// Returns an exclusive reference to the minimum element's value.
     /// Modifying only the value does not affect the heap ordering. Time: O(1).
     pub fn peek_value_mut(&mut self) -> Option<&mut V> {
-        self.entries.first_mut().map(|entry| &mut entry.item.1)
+        (!self.entries.is_empty()).then(move || unsafe { self.peek_unchecked_value_mut() })
+    }
+
+    /// Returns an exclusive reference to the minimum element's value without
+    /// checking that the heap is non-empty. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// The heap must not be empty.
+    pub unsafe fn peek_unchecked_value_mut(&mut self) -> &mut V {
+        unsafe { &mut self.peek_mut_impl().1 }
     }
 
     /// Returns a shared reference to the `(key, value)` pair of the element
     /// with `id`, or `None` if `id` is not live. Time: O(1).
     pub fn get(&self, id: usize) -> Option<&(K, V)> {
-        let index = *self.indices.get(id)?;
+        let index = self.get_index(id)?;
         Some(unsafe { &self.entries.get_unchecked(index).item })
+    }
+
+    /// Returns a shared reference to the `(key, value)` pair of the element
+    /// with `id` without checking that `id` is live. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// `id` must refer to a live element.
+    pub unsafe fn get_unchecked(&self, id: usize) -> &(K, V) {
+        unsafe {
+            let index = self.get_unchecked_index(id);
+            &self.entries.get_unchecked(index).item
+        }
     }
 
     /// Returns a shared reference to the key of the element with `id`. Time: O(1).
     pub fn get_key(&self, id: usize) -> Option<&K> {
-        let index = *self.indices.get(id)?;
+        let index = self.get_index(id)?;
         Some(unsafe { &self.entries.get_unchecked(index).item.0 })
+    }
+
+    /// Returns a shared reference to the key of the element with `id` without
+    /// checking that `id` is live. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// `id` must refer to a live element.
+    pub unsafe fn get_unchecked_key(&self, id: usize) -> &K {
+        unsafe {
+            let index = self.get_unchecked_index(id);
+            &self.entries.get_unchecked(index).item.0
+        }
     }
 
     /// Returns a shared reference to the value of the element with `id`. Time: O(1).
     pub fn get_value(&self, id: usize) -> Option<&V> {
-        let index = *self.indices.get(id)?;
+        let index = self.get_index(id)?;
         Some(unsafe { &self.entries.get_unchecked(index).item.1 })
+    }
+
+    /// Returns a shared reference to the value of the element with `id` without
+    /// checking that `id` is live. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// `id` must refer to a live element.
+    pub unsafe fn get_unchecked_value(&self, id: usize) -> &V {
+        unsafe {
+            let index = self.get_unchecked_index(id);
+            &self.entries.get_unchecked(index).item.1
+        }
     }
 
     /// Returns an exclusive guard over the `(key, value)` pair of the element
     /// with `id`. If the guard is mutated, the heap invariant is restored on drop.
     /// Time: O(1) to create; drop may run O(log n) heapify.
     pub fn get_mut(&mut self, id: usize) -> Option<RefMut<'_, K, V>> {
-        let index = *self.indices.get(id)?;
-        Some(RefMut {
+        self.contains(id)
+            .then(move || unsafe { self.get_unchecked_mut(id) })
+    }
+
+    /// Returns an exclusive guard over the `(key, value)` pair of the element
+    /// with `id` without checking that `id` is live. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// `id` must refer to a live element.
+    pub unsafe fn get_unchecked_mut(&mut self, id: usize) -> RefMut<'_, K, V> {
+        RefMut {
             dirty: false,
             from: self,
-            index,
-        })
+            id,
+        }
     }
 
     /// Returns an exclusive guard over the key of the element with `id`. If the
     /// key is modified, the heap invariant is restored on drop.
     /// Time: O(1) to create; drop may run O(log n) heapify.
     pub fn get_key_mut(&mut self, id: usize) -> Option<RefKeyMut<'_, K, V>> {
-        let index = *self.indices.get(id)?;
-        Some(RefKeyMut {
+        self.contains(id)
+            .then(move || unsafe { self.get_unchecked_key_mut(id) })
+    }
+
+    /// Returns an exclusive guard over the key of the element with `id` without
+    /// checking that `id` is live. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// `id` must refer to a live element.
+    pub unsafe fn get_unchecked_key_mut(&mut self, id: usize) -> RefKeyMut<'_, K, V> {
+        RefKeyMut {
             dirty: false,
             from: self,
-            index,
-        })
+            id,
+        }
     }
 
     /// Returns an exclusive reference to the value of the element with `id`.
     /// Modifying only the value does not affect the heap ordering. Time: O(1).
     pub fn get_value_mut(&mut self, id: usize) -> Option<&mut V> {
-        let index = *self.indices.get(id)?;
+        let index = self.get_index(id)?;
         Some(unsafe { &mut self.entries.get_unchecked_mut(index).item.1 })
     }
 
+    /// Returns an exclusive reference to the value of the element with `id`
+    /// without checking that `id` is live. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// `id` must refer to a live element.
+    pub unsafe fn get_unchecked_value_mut(&mut self, id: usize) -> &mut V {
+        unsafe {
+            let index = self.get_unchecked_index(id);
+            &mut self.entries.get_unchecked_mut(index).item.1
+        }
+    }
+
     pub(crate) unsafe fn heapify(&mut self, now: usize) {
-        let now = unsafe { self.heapify_up(now) };
-        unsafe { self.heapify_down(now) }
+        unsafe {
+            let now = self.heapify_up(now);
+            self.heapify_down(now)
+        }
     }
 
     unsafe fn heapify_up(&mut self, mut now: usize) -> usize {
@@ -285,16 +434,23 @@ where
         }
     }
 
+    pub(crate) unsafe fn peek_mut_impl(&mut self) -> &mut (K, V) {
+        unsafe { &mut self.entries.get_unchecked_mut(0).item }
+    }
+
+    pub(crate) unsafe fn get_mut_impl(&mut self, id: usize) -> &mut (K, V) {
+        unsafe {
+            let index = self.get_unchecked_index(id);
+            &mut self.entries.get_unchecked_mut(index).item
+        }
+    }
+
     pub(crate) fn get_index(&self, id: usize) -> Option<usize> {
         self.indices.get(id).copied()
     }
 
-    pub(crate) unsafe fn by_index(&self, index: usize) -> &(K, V) {
-        unsafe { &self.entries.get_unchecked(index).item }
-    }
-
-    pub(crate) unsafe fn by_index_mut(&mut self, index: usize) -> &mut (K, V) {
-        unsafe { &mut self.entries.get_unchecked_mut(index).item }
+    pub(crate) unsafe fn get_unchecked_index(&self, id: usize) -> usize {
+        unsafe { *self.indices.get_unchecked(id) }
     }
 }
 
@@ -350,28 +506,41 @@ where
     from: &'a mut SlotHeap<K, V>,
 }
 
-impl<'a, K, V> Deref for PeekMut<'a, K, V>
+impl<K, V> PeekMut<'_, K, V>
+where
+    K: PartialOrd,
+{
+    /// Removes the minimum element from the heap and returns its `(key, value)`.
+    /// Consumes the guard without running drop. Time: O(log n).
+    pub fn remove(self) -> (K, V) {
+        let item = unsafe { self.from.pop_unchecked() };
+        mem::forget(self);
+        item
+    }
+}
+
+impl<K, V> Deref for PeekMut<'_, K, V>
 where
     K: PartialOrd,
 {
     type Target = (K, V);
 
     fn deref(&self) -> &Self::Target {
-        unsafe { &self.from.entries.get_unchecked(0).item }
+        unsafe { self.from.peek_unchecked() }
     }
 }
 
-impl<'a, K, V> DerefMut for PeekMut<'a, K, V>
+impl<K, V> DerefMut for PeekMut<'_, K, V>
 where
     K: PartialOrd,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
-        unsafe { &mut self.from.entries.get_unchecked_mut(0).item }
+        unsafe { self.from.peek_mut_impl() }
     }
 }
 
-impl<'a, K, V> AsRef<(K, V)> for PeekMut<'a, K, V>
+impl<K, V> AsRef<(K, V)> for PeekMut<'_, K, V>
 where
     K: PartialOrd,
 {
@@ -380,7 +549,7 @@ where
     }
 }
 
-impl<'a, K, V> AsMut<(K, V)> for PeekMut<'a, K, V>
+impl<K, V> AsMut<(K, V)> for PeekMut<'_, K, V>
 where
     K: PartialOrd,
 {
@@ -389,7 +558,7 @@ where
     }
 }
 
-impl<'a, K, V> Drop for PeekMut<'a, K, V>
+impl<K, V> Drop for PeekMut<'_, K, V>
 where
     K: PartialOrd,
 {
@@ -410,28 +579,41 @@ where
     from: &'a mut SlotHeap<K, V>,
 }
 
-impl<'a, K, V> Deref for PeekKeyMut<'a, K, V>
+impl<K, V> PeekKeyMut<'_, K, V>
+where
+    K: PartialOrd,
+{
+    /// Removes the minimum element from the heap and returns its key.
+    /// Consumes the guard without running drop. Time: O(log n).
+    pub fn remove(self) -> K {
+        let (key, _) = unsafe { self.from.pop_unchecked() };
+        mem::forget(self);
+        key
+    }
+}
+
+impl<K, V> Deref for PeekKeyMut<'_, K, V>
 where
     K: PartialOrd,
 {
     type Target = K;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { &self.from.entries.get_unchecked(0).item.0 }
+        unsafe { self.from.peek_unchecked_key() }
     }
 }
 
-impl<'a, K, V> DerefMut for PeekKeyMut<'a, K, V>
+impl<K, V> DerefMut for PeekKeyMut<'_, K, V>
 where
     K: PartialOrd,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
-        unsafe { &mut self.from.entries.get_unchecked_mut(0).item.0 }
+        unsafe { &mut self.from.peek_mut_impl().0 }
     }
 }
 
-impl<'a, K, V> AsRef<K> for PeekKeyMut<'a, K, V>
+impl<K, V> AsRef<K> for PeekKeyMut<'_, K, V>
 where
     K: PartialOrd,
 {
@@ -440,7 +622,7 @@ where
     }
 }
 
-impl<'a, K, V> AsMut<K> for PeekKeyMut<'a, K, V>
+impl<K, V> AsMut<K> for PeekKeyMut<'_, K, V>
 where
     K: PartialOrd,
 {
@@ -449,7 +631,7 @@ where
     }
 }
 
-impl<'a, K, V> Drop for PeekKeyMut<'a, K, V>
+impl<K, V> Drop for PeekKeyMut<'_, K, V>
 where
     K: PartialOrd,
 {
@@ -469,31 +651,44 @@ where
 {
     dirty: bool,
     from: &'a mut SlotHeap<K, V>,
-    index: usize,
+    id: usize,
 }
 
-impl<'a, K, V> Deref for RefMut<'a, K, V>
+impl<K, V> RefMut<'_, K, V>
+where
+    K: PartialOrd,
+{
+    /// Removes the element identified by this guard from the heap and returns
+    /// its `(key, value)`. Consumes the guard without running drop. Time: O(log n).
+    pub fn remove(self) -> (K, V) {
+        let item = unsafe { self.from.remove_unchecked(self.id) };
+        mem::forget(self);
+        item
+    }
+}
+
+impl<K, V> Deref for RefMut<'_, K, V>
 where
     K: PartialOrd,
 {
     type Target = (K, V);
 
     fn deref(&self) -> &Self::Target {
-        unsafe { &self.from.entries.get_unchecked(self.index).item }
+        unsafe { self.from.get_unchecked(self.id) }
     }
 }
 
-impl<'a, K, V> DerefMut for RefMut<'a, K, V>
+impl<K, V> DerefMut for RefMut<'_, K, V>
 where
     K: PartialOrd,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
-        unsafe { &mut self.from.entries.get_unchecked_mut(self.index).item }
+        unsafe { self.from.get_mut_impl(self.id) }
     }
 }
 
-impl<'a, K, V> AsRef<(K, V)> for RefMut<'a, K, V>
+impl<K, V> AsRef<(K, V)> for RefMut<'_, K, V>
 where
     K: PartialOrd,
 {
@@ -502,7 +697,7 @@ where
     }
 }
 
-impl<'a, K, V> AsMut<(K, V)> for RefMut<'a, K, V>
+impl<K, V> AsMut<(K, V)> for RefMut<'_, K, V>
 where
     K: PartialOrd,
 {
@@ -511,13 +706,16 @@ where
     }
 }
 
-impl<'a, K, V> Drop for RefMut<'a, K, V>
+impl<K, V> Drop for RefMut<'_, K, V>
 where
     K: PartialOrd,
 {
     fn drop(&mut self) {
         if self.dirty {
-            unsafe { self.from.heapify(self.index) }
+            unsafe {
+                let index = self.from.get_unchecked_index(self.id);
+                self.from.heapify(index)
+            }
         }
     }
 }
@@ -530,31 +728,44 @@ where
 {
     dirty: bool,
     from: &'a mut SlotHeap<K, V>,
-    index: usize,
+    id: usize,
 }
 
-impl<'a, K, V> Deref for RefKeyMut<'a, K, V>
+impl<K, V> RefKeyMut<'_, K, V>
+where
+    K: PartialOrd,
+{
+    /// Removes the element identified by this guard from the heap and returns
+    /// its key. Consumes the guard without running drop. Time: O(log n).
+    pub fn remove(self) -> K {
+        let (key, _) = unsafe { self.from.remove_unchecked(self.id) };
+        mem::forget(self);
+        key
+    }
+}
+
+impl<K, V> Deref for RefKeyMut<'_, K, V>
 where
     K: PartialOrd,
 {
     type Target = K;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { &self.from.entries.get_unchecked(self.index).item.0 }
+        unsafe { self.from.get_unchecked_key(self.id) }
     }
 }
 
-impl<'a, K, V> DerefMut for RefKeyMut<'a, K, V>
+impl<K, V> DerefMut for RefKeyMut<'_, K, V>
 where
     K: PartialOrd,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.dirty = true;
-        unsafe { &mut self.from.entries.get_unchecked_mut(self.index).item.0 }
+        unsafe { &mut self.from.get_mut_impl(self.id).0 }
     }
 }
 
-impl<'a, K, V> AsRef<K> for RefKeyMut<'a, K, V>
+impl<K, V> AsRef<K> for RefKeyMut<'_, K, V>
 where
     K: PartialOrd,
 {
@@ -563,7 +774,7 @@ where
     }
 }
 
-impl<'a, K, V> AsMut<K> for RefKeyMut<'a, K, V>
+impl<K, V> AsMut<K> for RefKeyMut<'_, K, V>
 where
     K: PartialOrd,
 {
@@ -572,13 +783,16 @@ where
     }
 }
 
-impl<'a, K, V> Drop for RefKeyMut<'a, K, V>
+impl<K, V> Drop for RefKeyMut<'_, K, V>
 where
     K: PartialOrd,
 {
     fn drop(&mut self) {
         if self.dirty {
-            unsafe { self.from.heapify(self.index) }
+            unsafe {
+                let index = self.from.get_unchecked_index(self.id);
+                self.from.heapify(index)
+            }
         }
     }
 }
