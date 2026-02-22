@@ -93,14 +93,6 @@ fn clear() {
 }
 
 #[test]
-fn with_num_shards_valid() {
-    let m = SlotMap::<i32>::with_num_shards(4).unwrap();
-    assert_eq!(m.num_shards(), 4);
-    let m = SlotMap::<i32>::with_num_shards(8).unwrap();
-    assert_eq!(m.num_shards(), 8);
-}
-
-#[test]
 fn with_num_shards_invalid() {
     for n in [0, 1, 2, 3, 5, 6, 7] {
         assert!(
@@ -595,8 +587,6 @@ fn large_scale_sum_invariant() {
 fn edge_with_num_shards_min_and_max() {
     let m4 = SlotMap::<i32>::with_num_shards(4).unwrap();
     let m8 = SlotMap::<i32>::with_num_shards(8).unwrap();
-    assert_eq!(m4.num_shards(), 4);
-    assert_eq!(m8.num_shards(), 8);
     let a = m4.insert(1);
     let b = m8.insert(2);
     assert_eq!(*m4.get(a).unwrap(), 1);

@@ -6,7 +6,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use crate::unsync;
+use crate::unsync::SlotHeap as Inner;
 
 /// Thread-safe min-heap with stable, reusable IDs.
 ///
@@ -31,9 +31,7 @@ use crate::unsync;
 /// heap.remove(a);
 /// assert_eq!(heap.len(), 0);
 /// ```
-pub struct SlotHeap<K, V> {
-    inner: RwLock<unsync::SlotHeap<K, V>>,
-}
+pub struct SlotHeap<K, V>(RwLock<Inner<K, V>>);
 
 impl<K, V> SlotHeap<K, V>
 where
@@ -41,41 +39,39 @@ where
 {
     /// Creates an empty `SlotHeap`. Time: O(1).
     pub fn new() -> Self {
-        Self {
-            inner: RwLock::new(unsync::SlotHeap::new()),
-        }
-    }
-
-    /// Removes all elements and resets internal state. Time: O(n).
-    pub fn clear(&self) {
-        self.inner.write().clear()
+        Self(RwLock::new(Inner::new()))
     }
 
     /// Returns the number of live elements. Time: O(1).
     pub fn len(&self) -> usize {
-        self.inner.read().len()
+        self.0.read().len()
     }
 
     /// Returns `true` if there are no live elements. Time: O(1).
     pub fn is_empty(&self) -> bool {
-        self.inner.read().is_empty()
+        self.0.read().is_empty()
     }
 
     /// Returns `true` if `id` refers to a live element. Time: O(1).
     pub fn contains(&self, id: usize) -> bool {
-        self.inner.read().contains(id)
+        self.0.read().contains(id)
+    }
+
+    /// Removes all elements and resets internal state. Time: O(n).
+    pub fn clear(&self) {
+        self.0.write().clear()
     }
 
     /// Inserts `(key, value)` and returns the new element's stable ID.
     /// Time: O(log n).
     pub fn insert(&self, key: K, value: V) -> usize {
-        self.inner.write().insert(key, value)
+        self.0.write().insert(key, value)
     }
 
     /// Removes and returns the minimum-key element, or `None` if the heap is
     /// empty. Time: O(log n).
     pub fn pop(&self) -> Option<(K, V)> {
-        self.inner.write().pop()
+        self.0.write().pop()
     }
 
     /// Removes and returns the minimum-key element without checking that the
@@ -86,13 +82,13 @@ where
     /// The heap must not be empty. Calling this on an empty heap is undefined
     /// behavior.
     pub unsafe fn pop_unchecked(&self) -> (K, V) {
-        unsafe { self.inner.write().pop_unchecked() }
+        unsafe { self.0.write().pop_unchecked() }
     }
 
     /// Removes the element with the given `id` and returns `(key, value)`, or
     /// `None` if `id` is not a live element. Time: O(log n).
     pub fn remove(&self, id: usize) -> Option<(K, V)> {
-        self.inner.write().remove(id)
+        self.0.write().remove(id)
     }
 
     /// Removes the element with the given `id` and returns `(key, value)`
@@ -103,13 +99,13 @@ where
     /// `id` must refer to a live element. Using an invalid or reused `id` is
     /// undefined behavior.
     pub unsafe fn remove_unchecked(&self, id: usize) -> (K, V) {
-        unsafe { self.inner.write().remove_unchecked(id) }
+        unsafe { self.0.write().remove_unchecked(id) }
     }
 
     /// Returns a shared reference to the minimum element's `(key, value)` pair.
     /// Time: O(1).
     pub fn peek(&self) -> Option<MappedRwLockReadGuard<'_, (K, V)>> {
-        RwLockReadGuard::try_map(self.inner.read(), |inner| inner.peek()).ok()
+        RwLockReadGuard::try_map(self.0.read(), |inner| inner.peek()).ok()
     }
 
     /// Returns a shared reference to the minimum element's `(key, value)` pair
@@ -119,12 +115,12 @@ where
     ///
     /// The heap must not be empty.
     pub unsafe fn peek_unchecked(&self) -> MappedRwLockReadGuard<'_, (K, V)> {
-        RwLockReadGuard::map(self.inner.read(), |inner| unsafe { inner.peek_unchecked() })
+        RwLockReadGuard::map(self.0.read(), |inner| unsafe { inner.peek_unchecked() })
     }
 
     /// Returns a shared reference to the minimum element's key. Time: O(1).
     pub fn peek_key(&self) -> Option<MappedRwLockReadGuard<'_, K>> {
-        RwLockReadGuard::try_map(self.inner.read(), |inner| inner.peek_key()).ok()
+        RwLockReadGuard::try_map(self.0.read(), |inner| inner.peek_key()).ok()
     }
 
     /// Returns a shared reference to the minimum element's key without
@@ -134,14 +130,12 @@ where
     ///
     /// The heap must not be empty.
     pub unsafe fn peek_unchecked_key(&self) -> MappedRwLockReadGuard<'_, K> {
-        RwLockReadGuard::map(self.inner.read(), |inner| unsafe {
-            inner.peek_unchecked_key()
-        })
+        RwLockReadGuard::map(self.0.read(), |inner| unsafe { inner.peek_unchecked_key() })
     }
 
     /// Returns a shared reference to the minimum element's value. Time: O(1).
     pub fn peek_value(&self) -> Option<MappedRwLockReadGuard<'_, V>> {
-        RwLockReadGuard::try_map(self.inner.read(), |inner| inner.peek_value()).ok()
+        RwLockReadGuard::try_map(self.0.read(), |inner| inner.peek_value()).ok()
     }
 
     /// Returns a shared reference to the minimum element's value without
@@ -151,7 +145,7 @@ where
     ///
     /// The heap must not be empty.
     pub unsafe fn peek_unchecked_value(&self) -> MappedRwLockReadGuard<'_, V> {
-        RwLockReadGuard::map(self.inner.read(), |inner| unsafe {
+        RwLockReadGuard::map(self.0.read(), |inner| unsafe {
             inner.peek_unchecked_value()
         })
     }
@@ -160,7 +154,7 @@ where
     /// If the guard is mutated, the heap invariant is restored on drop.
     /// Time: O(1) to create; drop may run O(log n) heapify.
     pub fn peek_mut(&self) -> Option<PeekMut<'_, K, V>> {
-        let guard = self.inner.write();
+        let guard = self.0.write();
         (!guard.is_empty()).then(|| PeekMut {
             guard: ManuallyDrop::new(guard),
             dirty: false,
@@ -175,7 +169,7 @@ where
     /// The heap must not be empty.
     pub unsafe fn peek_unchecked_mut(&self) -> PeekMut<'_, K, V> {
         PeekMut {
-            guard: ManuallyDrop::new(self.inner.write()),
+            guard: ManuallyDrop::new(self.0.write()),
             dirty: false,
         }
     }
@@ -184,7 +178,7 @@ where
     /// is modified, the heap invariant is restored on drop.
     /// Time: O(1) to create; drop may run O(log n) heapify.
     pub fn peek_key_mut(&self) -> Option<PeekKeyMut<'_, K, V>> {
-        let guard = self.inner.write();
+        let guard = self.0.write();
         (!guard.is_empty()).then(|| PeekKeyMut {
             guard: ManuallyDrop::new(guard),
             dirty: false,
@@ -199,7 +193,7 @@ where
     /// The heap must not be empty.
     pub unsafe fn peek_unchecked_key_mut(&self) -> PeekKeyMut<'_, K, V> {
         PeekKeyMut {
-            guard: ManuallyDrop::new(self.inner.write()),
+            guard: ManuallyDrop::new(self.0.write()),
             dirty: false,
         }
     }
@@ -207,7 +201,7 @@ where
     /// Returns an exclusive reference to the minimum element's value.
     /// Modifying only the value does not affect the heap ordering. Time: O(1).
     pub fn peek_value_mut(&self) -> Option<MappedRwLockWriteGuard<'_, V>> {
-        RwLockWriteGuard::try_map(self.inner.write(), |inner| inner.peek_value_mut()).ok()
+        RwLockWriteGuard::try_map(self.0.write(), Inner::peek_value_mut).ok()
     }
 
     /// Returns an exclusive reference to the minimum element's value without
@@ -217,7 +211,7 @@ where
     ///
     /// The heap must not be empty.
     pub unsafe fn peek_unchecked_value_mut(&self) -> MappedRwLockWriteGuard<'_, V> {
-        RwLockWriteGuard::map(self.inner.write(), |inner| unsafe {
+        RwLockWriteGuard::map(self.0.write(), |inner| unsafe {
             inner.peek_unchecked_value_mut()
         })
     }
@@ -225,7 +219,7 @@ where
     /// Returns a shared reference to the `(key, value)` pair of the element
     /// with `id`, or `None` if `id` is not live. Time: O(1).
     pub fn get(&self, id: usize) -> Option<MappedRwLockReadGuard<'_, (K, V)>> {
-        RwLockReadGuard::try_map(self.inner.read(), |inner| inner.get(id)).ok()
+        RwLockReadGuard::try_map(self.0.read(), |inner| inner.get(id)).ok()
     }
 
     /// Returns a shared reference to the `(key, value)` pair of the element
@@ -235,14 +229,12 @@ where
     ///
     /// `id` must refer to a live element.
     pub unsafe fn get_unchecked(&self, id: usize) -> MappedRwLockReadGuard<'_, (K, V)> {
-        RwLockReadGuard::map(self.inner.read(), |inner| unsafe {
-            inner.get_unchecked(id)
-        })
+        RwLockReadGuard::map(self.0.read(), |inner| unsafe { inner.get_unchecked(id) })
     }
 
     /// Returns a shared reference to the key of the element with `id`. Time: O(1).
     pub fn get_key(&self, id: usize) -> Option<MappedRwLockReadGuard<'_, K>> {
-        RwLockReadGuard::try_map(self.inner.read(), |inner| inner.get_key(id)).ok()
+        RwLockReadGuard::try_map(self.0.read(), |inner| inner.get_key(id)).ok()
     }
 
     /// Returns a shared reference to the key of the element with `id` without
@@ -252,14 +244,14 @@ where
     ///
     /// `id` must refer to a live element.
     pub unsafe fn get_unchecked_key(&self, id: usize) -> MappedRwLockReadGuard<'_, K> {
-        RwLockReadGuard::map(self.inner.read(), |inner| unsafe {
+        RwLockReadGuard::map(self.0.read(), |inner| unsafe {
             inner.get_unchecked_key(id)
         })
     }
 
     /// Returns a shared reference to the value of the element with `id`. Time: O(1).
     pub fn get_value(&self, id: usize) -> Option<MappedRwLockReadGuard<'_, V>> {
-        RwLockReadGuard::try_map(self.inner.read(), |inner| inner.get_value(id)).ok()
+        RwLockReadGuard::try_map(self.0.read(), |inner| inner.get_value(id)).ok()
     }
 
     /// Returns a shared reference to the value of the element with `id` without
@@ -269,7 +261,7 @@ where
     ///
     /// `id` must refer to a live element.
     pub unsafe fn get_unchecked_value(&self, id: usize) -> MappedRwLockReadGuard<'_, V> {
-        RwLockReadGuard::map(self.inner.read(), |inner| unsafe {
+        RwLockReadGuard::map(self.0.read(), |inner| unsafe {
             inner.get_unchecked_value(id)
         })
     }
@@ -278,7 +270,7 @@ where
     /// with `id`. If the guard is mutated, the heap invariant is restored on drop.
     /// Time: O(1) to create; drop may run O(log n) heapify.
     pub fn get_mut(&self, id: usize) -> Option<RefMut<'_, K, V>> {
-        let guard = self.inner.write();
+        let guard = self.0.write();
         guard.contains(id).then(|| RefMut {
             guard: ManuallyDrop::new(guard),
             id,
@@ -293,7 +285,7 @@ where
     ///
     /// `id` must refer to a live element.
     pub unsafe fn get_unchecked_mut(&self, id: usize) -> RefMut<'_, K, V> {
-        let guard = self.inner.write();
+        let guard = self.0.write();
         RefMut {
             guard: ManuallyDrop::new(guard),
             id,
@@ -305,7 +297,7 @@ where
     /// key is modified, the heap invariant is restored on drop.
     /// Time: O(1) to create; drop may run O(log n) heapify.
     pub fn get_key_mut(&self, id: usize) -> Option<RefKeyMut<'_, K, V>> {
-        let guard = self.inner.write();
+        let guard = self.0.write();
         guard.contains(id).then(|| RefKeyMut {
             guard: ManuallyDrop::new(guard),
             id,
@@ -320,7 +312,7 @@ where
     ///
     /// `id` must refer to a live element.
     pub unsafe fn get_unchecked_key_mut(&self, id: usize) -> RefKeyMut<'_, K, V> {
-        let guard = self.inner.write();
+        let guard = self.0.write();
         RefKeyMut {
             guard: ManuallyDrop::new(guard),
             id,
@@ -331,7 +323,7 @@ where
     /// Returns an exclusive reference to the value of the element with `id`.
     /// Modifying only the value does not affect the heap ordering. Time: O(1).
     pub fn get_value_mut(&self, id: usize) -> Option<MappedRwLockWriteGuard<'_, V>> {
-        RwLockWriteGuard::try_map(self.inner.write(), |inner| inner.get_value_mut(id)).ok()
+        RwLockWriteGuard::try_map(self.0.write(), |inner| inner.get_value_mut(id)).ok()
     }
 
     /// Returns an exclusive reference to the value of the element with `id`
@@ -341,7 +333,7 @@ where
     ///
     /// `id` must refer to a live element.
     pub unsafe fn get_unchecked_value_mut(&self, id: usize) -> MappedRwLockWriteGuard<'_, V> {
-        RwLockWriteGuard::map(self.inner.write(), |inner| unsafe {
+        RwLockWriteGuard::map(self.0.write(), |inner| unsafe {
             inner.get_unchecked_value_mut(id)
         })
     }
@@ -362,7 +354,7 @@ pub struct PeekMut<'a, K, V>
 where
     K: PartialOrd,
 {
-    guard: ManuallyDrop<RwLockWriteGuard<'a, unsync::SlotHeap<K, V>>>,
+    guard: ManuallyDrop<RwLockWriteGuard<'a, Inner<K, V>>>,
     dirty: bool,
 }
 
@@ -420,7 +412,7 @@ pub struct PeekKeyMut<'a, K, V>
 where
     K: PartialOrd,
 {
-    guard: ManuallyDrop<RwLockWriteGuard<'a, unsync::SlotHeap<K, V>>>,
+    guard: ManuallyDrop<RwLockWriteGuard<'a, Inner<K, V>>>,
     dirty: bool,
 }
 
@@ -479,7 +471,7 @@ pub struct RefMut<'a, K, V>
 where
     K: PartialOrd,
 {
-    guard: ManuallyDrop<RwLockWriteGuard<'a, unsync::SlotHeap<K, V>>>,
+    guard: ManuallyDrop<RwLockWriteGuard<'a, Inner<K, V>>>,
     id: usize,
     dirty: bool,
 }
@@ -541,7 +533,7 @@ pub struct RefKeyMut<'a, K, V>
 where
     K: PartialOrd,
 {
-    guard: ManuallyDrop<RwLockWriteGuard<'a, unsync::SlotHeap<K, V>>>,
+    guard: ManuallyDrop<RwLockWriteGuard<'a, Inner<K, V>>>,
     id: usize,
     dirty: bool,
 }

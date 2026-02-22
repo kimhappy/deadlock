@@ -32,7 +32,7 @@ pub struct SlotMap<T> {
 
 impl<T> SlotMap<T> {
     /// Creates an empty `SlotMap`. Time: O(1).
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             entries: Vec::new(),
             next: 0,
@@ -40,20 +40,13 @@ impl<T> SlotMap<T> {
         }
     }
 
-    /// Removes all entries and resets the free-list. Time: O(n) where n is the capacity.
-    pub fn clear(&mut self) {
-        self.entries.clear();
-        self.len = 0;
-        self.next = 0
-    }
-
     /// Returns the number of live entries. Time: O(1).
-    pub const fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.len
     }
 
     /// Returns `true` if there are no live entries. Time: O(1).
-    pub const fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
@@ -62,36 +55,11 @@ impl<T> SlotMap<T> {
         self.entries.get(id).is_some_and(Result::is_ok)
     }
 
-    /// Returns a shared reference to the value at `id`, or `None` if `id` is
-    /// not a live entry. Time: O(1).
-    pub fn get(&self, id: usize) -> Option<&T> {
-        self.entries.get(id)?.okok()
-    }
-
-    /// Returns a shared reference to the value at `id` without bounds or
-    /// liveness checking. Time: O(1).
-    ///
-    /// # Safety
-    ///
-    /// `id` must refer to a live entry.
-    pub unsafe fn get_unchecked(&self, id: usize) -> &T {
-        unsafe { self.entries.get_unchecked(id).okok_unchecked() }
-    }
-
-    /// Returns an exclusive reference to the value at `id`, or `None` if `id`
-    /// is not a live entry. Time: O(1).
-    pub fn get_mut(&mut self, id: usize) -> Option<&mut T> {
-        self.entries.get_mut(id)?.okok()
-    }
-
-    /// Returns an exclusive reference to the value at `id` without bounds or
-    /// liveness checking. Time: O(1).
-    ///
-    /// # Safety
-    ///
-    /// `id` must refer to a live entry.
-    pub unsafe fn get_unchecked_mut(&mut self, id: usize) -> &mut T {
-        unsafe { self.entries.get_unchecked_mut(id).okok_unchecked() }
+    /// Removes all entries and resets the free-list. Time: O(n) where n is the capacity.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.len = 0;
+        self.next = 0
     }
 
     /// Inserts `value` and returns its new stable ID. Reuses the next free
@@ -144,6 +112,38 @@ impl<T> SlotMap<T> {
         let value = unsafe { mem::replace(entry, new_entry).unwrap_unchecked() };
         self.next = id;
         value
+    }
+
+    /// Returns a shared reference to the value at `id`, or `None` if `id` is
+    /// not a live entry. Time: O(1).
+    pub fn get(&self, id: usize) -> Option<&T> {
+        self.entries.get(id)?.okok()
+    }
+
+    /// Returns a shared reference to the value at `id` without bounds or
+    /// liveness checking. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// `id` must refer to a live entry.
+    pub unsafe fn get_unchecked(&self, id: usize) -> &T {
+        unsafe { self.entries.get_unchecked(id).okok_unchecked() }
+    }
+
+    /// Returns an exclusive reference to the value at `id`, or `None` if `id`
+    /// is not a live entry. Time: O(1).
+    pub fn get_mut(&mut self, id: usize) -> Option<&mut T> {
+        self.entries.get_mut(id)?.okok()
+    }
+
+    /// Returns an exclusive reference to the value at `id` without bounds or
+    /// liveness checking. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// `id` must refer to a live entry.
+    pub unsafe fn get_unchecked_mut(&mut self, id: usize) -> &mut T {
+        unsafe { self.entries.get_unchecked_mut(id).okok_unchecked() }
     }
 
     /// Swaps the values at `id0` and `id1` in-place. Returns `None` if either

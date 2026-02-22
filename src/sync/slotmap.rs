@@ -8,7 +8,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crate::{unsync, util};
+use crate::{unsync::SlotMap as Inner, util};
 
 /// Thread-safe slot map with stable, reusable IDs.
 ///
@@ -40,7 +40,7 @@ pub struct SlotMap<T> {
 }
 
 struct Shard<T> {
-    inner: RwLock<unsync::SlotMap<T>>,
+    inner: RwLock<Inner<T>>,
     len: AtomicUsize,
 }
 
@@ -69,7 +69,7 @@ impl<T> SlotMap<T> {
         Self {
             shards: iter::repeat_with(|| {
                 CachePadded::new(Shard {
-                    inner: RwLock::new(unsync::SlotMap::new()),
+                    inner: RwLock::new(Inner::new()),
                     len: AtomicUsize::new(0),
                 })
             })
@@ -77,11 +77,6 @@ impl<T> SlotMap<T> {
             .collect(),
             rr: AtomicUsize::new(0),
         }
-    }
-
-    /// Returns the number of shards. Time: O(1).
-    pub fn num_shards(&self) -> usize {
-        self.shards.len()
     }
 
     /// Returns the total number of live entries across all shards. Each shard's
@@ -101,16 +96,6 @@ impl<T> SlotMap<T> {
             .all(|shard| shard.len.load(Ordering::Relaxed) == 0)
     }
 
-    /// Removes all entries from every shard, acquiring each shard's write lock
-    /// in sequence. Time: O(num_shards + total capacity).
-    pub fn clear(&self) {
-        for shard in self.shards.iter() {
-            let mut inner = shard.inner.write();
-            inner.clear();
-            shard.len.store(0, Ordering::Relaxed)
-        }
-    }
-
     /// Returns `true` if `id` refers to a live entry. Time: O(1).
     pub fn contains(&self, id: usize) -> bool {
         let (shard_index, id) = self.split(id);
@@ -120,48 +105,14 @@ impl<T> SlotMap<T> {
             .unwrap_or(false)
     }
 
-    /// Returns a read-locked guard for the value at `id`, or `None` if `id` is
-    /// not a live entry. Time: O(1).
-    pub fn get(&self, id: usize) -> Option<MappedRwLockReadGuard<'_, T>> {
-        let (shard_index, id) = self.split(id);
-        let shard = self.shards.get(shard_index)?;
-        RwLockReadGuard::try_map(shard.inner.read(), |inner| inner.get(id)).ok()
-    }
-
-    /// Returns a read-locked guard for the value at `id` without liveness
-    /// checking. Time: O(1).
-    ///
-    /// # Safety
-    ///
-    /// `id` must refer to a live entry.
-    pub unsafe fn get_unchecked(&self, id: usize) -> MappedRwLockReadGuard<'_, T> {
-        let (shard_index, id) = self.split(id);
-        let shard = unsafe { self.shards.get_unchecked(shard_index) };
-        RwLockReadGuard::map(shard.inner.read(), |inner| unsafe {
-            inner.get_unchecked(id)
-        })
-    }
-
-    /// Returns a write-locked guard for the value at `id`, or `None` if `id`
-    /// is not a live entry. Time: O(1).
-    pub fn get_mut(&self, id: usize) -> Option<MappedRwLockWriteGuard<'_, T>> {
-        let (shard_index, id) = self.split(id);
-        let shard = self.shards.get(shard_index)?;
-        RwLockWriteGuard::try_map(shard.inner.write(), |inner| inner.get_mut(id)).ok()
-    }
-
-    /// Returns a write-locked guard for the value at `id` without liveness
-    /// checking. Time: O(1).
-    ///
-    /// # Safety
-    ///
-    /// `id` must refer to a live entry.
-    pub unsafe fn get_unchecked_mut(&self, id: usize) -> MappedRwLockWriteGuard<'_, T> {
-        let (shard_index, id) = self.split(id);
-        let shard = unsafe { self.shards.get_unchecked(shard_index) };
-        RwLockWriteGuard::map(shard.inner.write(), |inner| unsafe {
-            inner.get_unchecked_mut(id)
-        })
+    /// Removes all entries from every shard, acquiring each shard's write lock
+    /// in sequence. Time: O(num_shards + total capacity).
+    pub fn clear(&self) {
+        for shard in self.shards.iter() {
+            let mut inner = shard.inner.write();
+            inner.clear();
+            shard.len.store(0, Ordering::Relaxed)
+        }
     }
 
     /// Inserts `value` and returns its stable ID. Picks the least-loaded shard
@@ -225,10 +176,54 @@ impl<T> SlotMap<T> {
         value
     }
 
+    /// Returns a read-locked guard for the value at `id`, or `None` if `id` is
+    /// not a live entry. Time: O(1).
+    pub fn get(&self, id: usize) -> Option<MappedRwLockReadGuard<'_, T>> {
+        let (shard_index, id) = self.split(id);
+        let shard = self.shards.get(shard_index)?;
+        RwLockReadGuard::try_map(shard.inner.read(), |inner| inner.get(id)).ok()
+    }
+
+    /// Returns a read-locked guard for the value at `id` without liveness
+    /// checking. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// `id` must refer to a live entry.
+    pub unsafe fn get_unchecked(&self, id: usize) -> MappedRwLockReadGuard<'_, T> {
+        let (shard_index, id) = self.split(id);
+        let shard = unsafe { self.shards.get_unchecked(shard_index) };
+        RwLockReadGuard::map(shard.inner.read(), |inner| unsafe {
+            inner.get_unchecked(id)
+        })
+    }
+
+    /// Returns a write-locked guard for the value at `id`, or `None` if `id`
+    /// is not a live entry. Time: O(1).
+    pub fn get_mut(&self, id: usize) -> Option<MappedRwLockWriteGuard<'_, T>> {
+        let (shard_index, id) = self.split(id);
+        let shard = self.shards.get(shard_index)?;
+        RwLockWriteGuard::try_map(shard.inner.write(), |inner| inner.get_mut(id)).ok()
+    }
+
+    /// Returns a write-locked guard for the value at `id` without liveness
+    /// checking. Time: O(1).
+    ///
+    /// # Safety
+    ///
+    /// `id` must refer to a live entry.
+    pub unsafe fn get_unchecked_mut(&self, id: usize) -> MappedRwLockWriteGuard<'_, T> {
+        let (shard_index, id) = self.split(id);
+        let shard = unsafe { self.shards.get_unchecked(shard_index) };
+        RwLockWriteGuard::map(shard.inner.write(), |inner| unsafe {
+            inner.get_unchecked_mut(id)
+        })
+    }
+
     /// Swaps the values at `id0` and `id1` in-place. Returns `None` if either
     /// ID is not a live entry or refers to a different shard's out-of-range slot.
     /// When the two IDs are in different shards, lock order is unspecified;
-    /// for concurrent cross-shard swaps prefer [`swap_ascending`][Self::swap_ascending]
+    /// for concurrent cross-shard swaps prefer [`swap_ordered`][Self::swap_ordered]
     /// to avoid deadlock. Time: O(1).
     pub fn swap(&self, id0: usize, id1: usize) -> Option<()> {
         let (shard_index0, id0) = self.split(id0);
@@ -255,7 +250,7 @@ impl<T> SlotMap<T> {
     /// Like [`swap`][Self::swap] but acquires shard locks in ascending index
     /// order. Use when all callers use ascending order to avoid deadlock.
     /// Returns `None` if either ID is not live. Time: O(1).
-    pub fn swap_ascending(&self, id0: usize, id1: usize) -> Option<()> {
+    pub fn swap_ordered(&self, id0: usize, id1: usize) -> Option<()> {
         let (mut shard_index0, mut id0) = self.split(id0);
         let (mut shard_index1, mut id1) = self.split(id1);
 
@@ -266,37 +261,6 @@ impl<T> SlotMap<T> {
         }
 
         if shard_index1 < shard_index0 {
-            mem::swap(&mut shard_index0, &mut shard_index1);
-            mem::swap(&mut id0, &mut id1);
-        }
-
-        let shard0 = self.shards.get(shard_index0)?;
-        let shard1 = self.shards.get(shard_index1)?;
-
-        let mut guard0 = shard0.inner.write();
-        let mut guard1 = shard1.inner.write();
-
-        let elem0 = guard0.get_mut(id0)?;
-        let elem1 = guard1.get_mut(id1)?;
-        mem::swap(elem0, elem1);
-        Some(())
-    }
-
-    /// Like [`swap`][Self::swap] but acquires shard locks in descending index
-    /// order. Do not mix with [`swap_ascending`][Self::swap_ascending] from other
-    /// threads or deadlock may occur. Returns `None` if either ID is not live.
-    /// Time: O(1).
-    pub fn swap_descending(&self, id0: usize, id1: usize) -> Option<()> {
-        let (mut shard_index0, mut id0) = self.split(id0);
-        let (mut shard_index1, mut id1) = self.split(id1);
-
-        if shard_index0 == shard_index1 {
-            let shard = self.shards.get(shard_index0)?;
-            let mut guard = shard.inner.write();
-            return guard.swap(id0, id1);
-        }
-
-        if shard_index0 < shard_index1 {
             mem::swap(&mut shard_index0, &mut shard_index1);
             mem::swap(&mut id0, &mut id1);
         }
@@ -346,7 +310,7 @@ impl<T> SlotMap<T> {
     /// # Safety
     ///
     /// Both `id0` and `id1` must refer to live entries.
-    pub unsafe fn swap_ascending_unchecked(&self, id0: usize, id1: usize) {
+    pub unsafe fn swap_ordered_unchecked(&self, id0: usize, id1: usize) {
         let (mut shard_index0, mut id0) = self.split(id0);
         let (mut shard_index1, mut id1) = self.split(id1);
 
@@ -357,38 +321,6 @@ impl<T> SlotMap<T> {
         }
 
         if shard_index1 < shard_index0 {
-            mem::swap(&mut shard_index0, &mut shard_index1);
-            mem::swap(&mut id0, &mut id1);
-        }
-
-        let shard0 = unsafe { self.shards.get_unchecked(shard_index0) };
-        let shard1 = unsafe { self.shards.get_unchecked(shard_index1) };
-
-        let mut guard0 = shard0.inner.write();
-        let mut guard1 = shard1.inner.write();
-
-        let elem0 = unsafe { guard0.get_unchecked_mut(id0) };
-        let elem1 = unsafe { guard1.get_unchecked_mut(id1) };
-        mem::swap(elem0, elem1)
-    }
-
-    /// Like [`swap_unchecked`][Self::swap_unchecked] but acquires shard locks
-    /// in descending index order.
-    ///
-    /// # Safety
-    ///
-    /// Both `id0` and `id1` must refer to live entries.
-    pub unsafe fn swap_descending_unchecked(&self, id0: usize, id1: usize) {
-        let (mut shard_index0, mut id0) = self.split(id0);
-        let (mut shard_index1, mut id1) = self.split(id1);
-
-        if shard_index0 == shard_index1 {
-            let shard = unsafe { self.shards.get_unchecked(shard_index0) };
-            let mut guard = shard.inner.write();
-            return unsafe { guard.swap_unchecked(id0, id1) };
-        }
-
-        if shard_index0 < shard_index1 {
             mem::swap(&mut shard_index0, &mut shard_index1);
             mem::swap(&mut id0, &mut id1);
         }
@@ -426,22 +358,28 @@ impl<T> SlotMap<T> {
     }
 
     fn num_shift(&self) -> u32 {
-        self.num_shards().trailing_zeros()
+        self.shards.len().trailing_zeros()
     }
 
     fn rr_mask(&self) -> usize {
-        self.num_shards() - 1
+        self.shards.len() - 1
     }
 
     fn rr_interval(&self) -> usize {
-        self.num_shards() >> 2
+        self.shards.len() >> 2
+    }
+}
+
+impl<T> Default for SlotMap<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 /// Guard for a slot reserved by [`SlotMap::lazy_insert`]. Call [`commit`][Self::commit]
 /// to store a value and make the slot live; otherwise the slot is freed on drop.
 pub struct LazyInsert<'a, T> {
-    guard: ManuallyDrop<RwLockWriteGuard<'a, unsync::SlotMap<T>>>,
+    guard: ManuallyDrop<RwLockWriteGuard<'a, Inner<T>>>,
     shard: &'a Shard<T>,
     id: usize,
 }
@@ -466,11 +404,5 @@ impl<T> Drop for LazyInsert<'_, T> {
             let mut guard = ManuallyDrop::take(&mut self.guard);
             guard.drop_lazy_insert(self.id)
         }
-    }
-}
-
-impl<T> Default for SlotMap<T> {
-    fn default() -> Self {
-        Self::new()
     }
 }

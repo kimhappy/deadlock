@@ -54,12 +54,6 @@ where
         }
     }
 
-    /// Removes all elements and resets internal state. Time: O(n).
-    pub fn clear(&mut self) {
-        self.entries.clear();
-        self.indices.clear()
-    }
-
     /// Returns the number of live elements. Time: O(1).
     pub fn len(&self) -> usize {
         self.entries.len()
@@ -73,6 +67,12 @@ where
     /// Returns `true` if `id` refers to a live element. Time: O(1).
     pub fn contains(&self, id: usize) -> bool {
         self.indices.contains(id)
+    }
+
+    /// Removes all elements and resets internal state. Time: O(n).
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.indices.clear()
     }
 
     /// Inserts `(key, value)` and returns the new element's stable ID.
