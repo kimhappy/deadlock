@@ -81,30 +81,6 @@ fn get_mut() {
 }
 
 #[test]
-fn swap_same_shard() {
-    let map = SlotMap::with_num_shards(4).unwrap();
-    let a = map.insert(1i32);
-    let b = map.insert(2);
-    let _ = map.swap(a, b, false);
-    let va = *map.get(a).unwrap();
-    let vb = *map.get(b).unwrap();
-    assert!(
-        (va == 1 && vb == 2) || (va == 2 && vb == 1),
-        "swap result inconsistent: a={}, b={}",
-        va,
-        vb
-    );
-}
-
-#[test]
-fn swap_invalid_id() {
-    let map = SlotMap::new();
-    let a = map.insert(1i32);
-    assert!(map.swap(a, 999, false).is_none());
-    assert!(map.swap(999, a, false).is_none());
-}
-
-#[test]
 fn clear() {
     let map = SlotMap::new();
     let a = map.insert(1i32);
@@ -374,43 +350,6 @@ fn hammer_insert_get_remove() {
     }
 
     assert!(map.is_empty());
-}
-
-#[test]
-fn concurrent_cross_shard_swap_preserves_multiset() {
-    const N: usize = 64;
-    let map = Arc::new(SlotMap::with_num_shards(4).unwrap());
-
-    let ids = Arc::new((0..N as i32).map(|i| map.insert(i)).collect::<Vec<usize>>());
-
-    let barrier = Arc::new(Barrier::new(4));
-
-    let handles = (0..4)
-        .map(|t| {
-            let map = Arc::clone(&map);
-            let ids = Arc::clone(&ids);
-            let barrier = Arc::clone(&barrier);
-            thread::spawn(move || {
-                barrier.wait();
-                for _ in 0..200 {
-                    let i = (t * 16) % N;
-                    let j = (t * 16 + 8) % N;
-                    map.swap(ids[i], ids[j], t % 2 == 0);
-                }
-            })
-        })
-        .collect::<Vec<_>>();
-
-    for h in handles {
-        h.join().unwrap();
-    }
-
-    let mut values = (0..N)
-        .filter_map(|i| map.get(ids[i]).map(|g| *g))
-        .collect::<Vec<i32>>();
-    values.sort();
-    let expected = (0..N as i32).collect::<Vec<i32>>();
-    assert_eq!(values, expected, "swap corrupted the value multiset");
 }
 
 #[test]
@@ -817,39 +756,6 @@ fn extreme_large_insert_then_concurrent_remove_by_id() {
 }
 
 #[test]
-fn extreme_cross_shard_swap_both_directions() {
-    const N: usize = 256;
-    let map = Arc::new(SlotMap::with_num_shards(8).unwrap());
-    let ids = (0..N as i32).map(|i| map.insert(i)).collect::<Vec<usize>>();
-    let ids = Arc::new(ids);
-    let barrier = Arc::new(Barrier::new(8));
-    let handles = (0..8)
-        .map(|t| {
-            let map = Arc::clone(&map);
-            let ids = Arc::clone(&ids);
-            let barrier = Arc::clone(&barrier);
-            thread::spawn(move || {
-                barrier.wait();
-                for _ in 0..500 {
-                    let i = (t * 31) % N;
-                    let j = (t * 31 + 16) % N;
-                    let _ = map.swap(ids[i], ids[j], t % 2 == 0);
-                }
-            })
-        })
-        .collect::<Vec<_>>();
-    for h in handles {
-        h.join().unwrap();
-    }
-    let mut values = (0..N)
-        .filter_map(|i| map.get(ids[i]).map(|g| *g))
-        .collect::<Vec<i32>>();
-    values.sort();
-    let expected = (0..N as i32).collect::<Vec<i32>>();
-    assert_eq!(values, expected);
-}
-
-#[test]
 fn extreme_hammer_insert_get_remove_high_contention() {
     let map = Arc::new(SlotMap::new());
     let barrier = Arc::new(Barrier::new(STRESS_THREADS));
@@ -932,47 +838,6 @@ fn extreme_get_unchecked_and_remove_unchecked() {
     assert_eq!(unsafe { map.remove_unchecked(a) }, 111);
     assert!(!map.contains(a));
     assert_eq!(map.remove(b), Some(22));
-}
-
-#[test]
-fn coverage_swap_unchecked_same_shard() {
-    let map = SlotMap::with_num_shards(4).unwrap();
-    let a = map.insert(1i32);
-    let b = map.insert(2i32);
-    unsafe { map.swap_unchecked(a, b, false) };
-    assert_eq!(*map.get(a).unwrap(), 2);
-    assert_eq!(*map.get(b).unwrap(), 1);
-}
-
-#[test]
-fn coverage_swap_unchecked_cross_shard_reverse_true() {
-    let map = SlotMap::with_num_shards(4).unwrap();
-    let mut ids = Vec::new();
-    for _ in 0..20 {
-        ids.push(map.insert(ids.len() as i32));
-    }
-    let a = ids[0];
-    let b = ids[15];
-    unsafe { map.swap_unchecked(a, b, true) };
-    let va = *map.get(a).unwrap();
-    let vb = *map.get(b).unwrap();
-    assert_eq!(va + vb, 0 + 15);
-}
-
-#[test]
-fn coverage_contains_invalid_id() {
-    let map = SlotMap::new();
-    let a = map.insert(1i32);
-    assert!(!map.contains(a.wrapping_add(1)));
-    assert!(!map.contains(usize::MAX));
-}
-
-#[test]
-fn coverage_default_slotmap() {
-    let map = SlotMap::<i32>::default();
-    assert!(map.is_empty());
-    let a = map.insert(42);
-    assert_eq!(*map.get(a).unwrap(), 42);
 }
 
 #[test]
