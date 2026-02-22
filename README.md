@@ -1,5 +1,5 @@
 # deadlock
-Stable-ID slot map and slot heap for Rust - both single-threaded (`unsync`) and thread-safe (`sync`) variants.
+Stable-ID slot map and slot heap for Rust: single-threaded (`unsync`), thread-safe (`sync`), and RAII-style owning IDs (`raii`).
 
 ![crates.io](https://img.shields.io/crates/v/deadlock?style=flat-square)
 ![docs.rs](https://img.shields.io/docsrs/deadlock?style=flat-square)
@@ -11,3 +11,5 @@ Stable-ID slot map and slot heap for Rust - both single-threaded (`unsync`) and 
 | `unsync::SlotHeap<K, V>` | Single-threaded min-heap. O(log n) insert / pop / remove / heapify by stable ID. |
 | `sync::SlotMap<T>` | Thread-safe slot map. Concurrent inserts, removes, and reads on independent shards. |
 | `sync::SlotHeap<K, V>` | Thread-safe min-heap. Mutations are serialized via an internal lock. |
+| `raii::SlotMap<T>` | Thread-safe slot map with owning IDs; dropping an ID removes the entry. |
+| `raii::SlotHeap<K, V>` | Thread-safe min-heap with owning IDs; dropping an ID removes the element. |
