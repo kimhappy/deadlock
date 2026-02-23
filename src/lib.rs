@@ -1,7 +1,10 @@
 #![doc = include_str!("../README.md")]
 
+mod inner;
 mod util;
 
-pub mod raii;
-pub mod sync;
-pub mod unsync;
+pub mod slotheap;
+pub mod slotmap;
+
+pub use slotheap::*;
+pub use slotmap::*;
