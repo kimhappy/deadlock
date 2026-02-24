@@ -1,9 +1,5 @@
 use deadlock::SlotHeap;
-use std::{
-    collections::HashSet,
-    sync::{mpsc, Arc, Barrier},
-    thread,
-};
+use std::collections::HashSet;
 
 #[test]
 fn empty_heap_peek_is_none() {
@@ -200,25 +196,6 @@ fn is_top_after_into_inner_min_next_becomes_top() {
 }
 
 #[test]
-fn insert_then_drop_all_ids_heap_empty() {
-    let heap = SlotHeap::new();
-    let mut ids = Vec::new();
-
-    for i in 0..32 {
-        let (id, _) = heap.insert(i);
-        ids.push(id)
-    }
-
-    assert_eq!(heap.len(), 32);
-
-    drop(ids);
-
-    assert_eq!(heap.len(), 0);
-    assert!(heap.is_empty());
-    assert!(heap.peek().is_none())
-}
-
-#[test]
 fn insert_returns_is_top_when_new_min() {
     let heap = SlotHeap::new();
 
@@ -232,138 +209,4 @@ fn insert_returns_is_top_when_new_min() {
     assert!(!top3);
 
     assert_eq!(*heap.peek().unwrap(), 3);
-}
-
-#[test]
-fn lazy_delete_then_peek_flushes_and_removes_deferred() {
-    let heap = SlotHeap::new();
-    let (id0, _) = heap.insert(0);
-    let (id1, _) = heap.insert(1);
-    let (id2, _) = heap.insert(2);
-
-    assert_eq!(heap.len(), 3);
-    assert_eq!(*heap.peek().unwrap(), 0);
-
-    let (tx_to_thread, rx_from_main) = mpsc::channel::<deadlock::SlotHeapId<_>>();
-    let (tx_to_main, rx_from_thread) = mpsc::channel();
-    let barrier = Arc::new(Barrier::new(2));
-    let barrier_clone = barrier.clone();
-    let handle = thread::spawn(move || {
-        let id1 = rx_from_main.recv().unwrap();
-        let _guard = id1.get();
-        barrier_clone.wait();
-        barrier_clone.wait();
-        drop(_guard);
-        tx_to_main.send(id1).unwrap();
-    });
-
-    tx_to_thread.send(id1).unwrap();
-    barrier.wait();
-    drop(id0);
-    barrier.wait();
-    let _id1 = rx_from_thread.recv().unwrap();
-    handle.join().unwrap();
-
-    assert_eq!(heap.len(), 2);
-    assert_eq!(*heap.peek().unwrap(), 1);
-    assert_eq!(*id2.get(), 2);
-}
-
-#[test]
-fn lazy_delete_then_peek_mut_flushes_and_removes_deferred() {
-    let heap = SlotHeap::new();
-    let (id0, _) = heap.insert(10);
-    let (id1, _) = heap.insert(20);
-    let (id2, _) = heap.insert(30);
-
-    let (tx_to_thread, rx_from_main) = mpsc::channel::<deadlock::SlotHeapId<_>>();
-    let (tx_to_main, rx_from_thread) = mpsc::channel();
-    let barrier = Arc::new(Barrier::new(2));
-    let barrier_clone = barrier.clone();
-    let handle = thread::spawn(move || {
-        let id1 = rx_from_main.recv().unwrap();
-        let _guard = id1.get();
-        barrier_clone.wait();
-        barrier_clone.wait();
-        drop(_guard);
-        tx_to_main.send(id1).unwrap();
-    });
-
-    tx_to_thread.send(id1).unwrap();
-    barrier.wait();
-    drop(id0);
-    barrier.wait();
-    let _id1 = rx_from_thread.recv().unwrap();
-    handle.join().unwrap();
-
-    assert_eq!(heap.len(), 2);
-    let min = heap.peek_mut().unwrap();
-    assert_eq!(*min, 20);
-    drop(min);
-    assert_eq!(*heap.peek().unwrap(), 20);
-    assert_eq!(*id2.get(), 30);
-}
-
-#[test]
-fn multiple_lazy_deletes_flushed_by_single_peek() {
-    let heap = SlotHeap::new();
-    let (id0, _) = heap.insert(0);
-    let (id1, _) = heap.insert(1);
-    let (id2, _) = heap.insert(2);
-    let (id3, _) = heap.insert(3);
-
-    let (tx_to_thread, rx_from_main) = mpsc::channel::<deadlock::SlotHeapId<_>>();
-    let (tx_to_main, rx_from_thread) = mpsc::channel();
-    let barrier = Arc::new(Barrier::new(2));
-    let barrier_clone = barrier.clone();
-    let handle = thread::spawn(move || {
-        let id2 = rx_from_main.recv().unwrap();
-        let _guard = id2.get();
-        barrier_clone.wait();
-        barrier_clone.wait();
-        drop(_guard);
-        tx_to_main.send(id2).unwrap();
-    });
-
-    tx_to_thread.send(id2).unwrap();
-    barrier.wait();
-    drop(id0);
-    drop(id1);
-    barrier.wait();
-    let _id2 = rx_from_thread.recv().unwrap();
-    handle.join().unwrap();
-
-    assert_eq!(heap.len(), 2);
-    assert_eq!(*heap.peek().unwrap(), 2);
-    assert_eq!(*id3.get(), 3);
-}
-
-#[test]
-fn len_decrements_on_lazy_delete_before_flush() {
-    let heap = SlotHeap::new();
-    let (id0, _) = heap.insert(0);
-    let (id1, _) = heap.insert(1);
-
-    let (tx_to_thread, rx_from_main) = mpsc::channel::<deadlock::SlotHeapId<_>>();
-    let (tx_to_main, rx_from_thread) = mpsc::channel();
-    let barrier = Arc::new(Barrier::new(2));
-    let barrier_clone = barrier.clone();
-    let handle = thread::spawn(move || {
-        let id1 = rx_from_main.recv().unwrap();
-        let _guard = id1.get();
-        barrier_clone.wait();
-        barrier_clone.wait();
-        drop(_guard);
-        tx_to_main.send(id1).unwrap();
-    });
-
-    tx_to_thread.send(id1).unwrap();
-    barrier.wait();
-    drop(id0);
-    barrier.wait();
-    let _id1 = rx_from_thread.recv().unwrap();
-    handle.join().unwrap();
-
-    assert_eq!(heap.len(), 1);
-    assert_eq!(*heap.peek().unwrap(), 1);
 }

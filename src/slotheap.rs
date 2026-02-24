@@ -1,12 +1,10 @@
 //! Thread-safe slot min-heap with stable RAII handle.
 
-use crossbeam_channel::{self, Receiver, Sender};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{
     convert::{TryFrom, TryInto},
     mem::{self, ManuallyDrop},
     ops::{Deref, DerefMut},
-    sync::atomic::{AtomicUsize, Ordering},
 };
 use triomphe::Arc;
 
@@ -17,7 +15,7 @@ use crate::inner;
 /// Elements are ordered by `T`'s [`PartialOrd`]. The minimum is at the top and can be read or
 /// mutated via [`peek`](SlotHeap::peek) / [`peek_mut`](SlotHeap::peek_mut).
 pub struct SlotHeap<T> {
-    inner: Arc<Inner<T>>,
+    inner: Arc<RwLock<inner::SlotHeap<T>>>,
 }
 
 /// Stable handle to an element in a [`SlotHeap`].
@@ -27,14 +25,8 @@ pub struct SlotHeapId<T>
 where
     T: PartialOrd,
 {
-    from: ManuallyDrop<Arc<Inner<T>>>,
+    from: ManuallyDrop<Arc<RwLock<inner::SlotHeap<T>>>>,
     id: usize,
-}
-
-struct Inner<T> {
-    inner: RwLock<inner::SlotHeap<T>>,
-    delete: (Sender<usize>, Receiver<usize>),
-    len: AtomicUsize,
 }
 
 impl<T> SlotHeap<T>
@@ -46,11 +38,7 @@ where
     /// Time complexity: O(1).
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Inner {
-                inner: RwLock::new(inner::SlotHeap::new()),
-                delete: crossbeam_channel::unbounded(),
-                len: 0.into(),
-            }),
+            inner: Arc::new(inner::SlotHeap::new().into()),
         }
     }
 
@@ -58,7 +46,7 @@ where
     ///
     /// Time complexity: O(1).
     pub fn len(&self) -> usize {
-        self.inner.len.load(Ordering::Relaxed)
+        self.inner.read().len()
     }
 
     /// Returns whether the heap is empty.
@@ -73,9 +61,8 @@ where
     /// Time complexity: O(log n).
     pub fn insert(&self, value: T) -> (SlotHeapId<T>, bool) {
         let from = ManuallyDrop::new(self.inner.clone());
-        let mut guard = self.inner.inner.write();
+        let mut guard = self.inner.write();
         let (id, is_top) = guard.insert(value);
-        self.inner.len.fetch_add(1, Ordering::Relaxed);
         (SlotHeapId { from, id }, is_top)
     }
 
@@ -83,7 +70,7 @@ where
     ///
     /// Time complexity: O(k) where k is the number of deferred removals, then O(1).
     pub fn peek(&self) -> Option<SlotHeapPeek<'_, T>> {
-        RwLockWriteGuard::downgrade(self.flush()).try_into().ok()
+        self.inner.read().try_into().ok()
     }
 
     /// Returns a mutable reference to the minimum element, or `None` if the heap is empty.
@@ -92,17 +79,7 @@ where
     ///
     /// Time complexity: O(k) where k is the number of deferred removals, then O(1).
     pub fn peek_mut(&self) -> Option<SlotHeapPeekMut<'_, T>> {
-        self.flush().try_into().ok()
-    }
-
-    fn flush(&self) -> RwLockWriteGuard<'_, inner::SlotHeap<T>> {
-        let mut guard = self.inner.inner.write();
-
-        for id in self.inner.delete.1.try_iter() {
-            unsafe { guard.remove_unchecked(id) };
-        }
-
-        guard
+        self.inner.write().try_into().ok()
     }
 }
 
@@ -123,9 +100,8 @@ where
     ///
     /// Time complexity: O(log n).
     pub fn into_inner(mut self) -> (T, bool) {
-        let mut guard = self.from.inner.write();
+        let mut guard = self.from.write();
         let item = unsafe { guard.remove_unchecked(self.id) };
-        self.from.len.fetch_sub(1, Ordering::Relaxed);
         drop(guard);
         unsafe { ManuallyDrop::drop(&mut self.from) };
         mem::forget(self);
@@ -136,14 +112,14 @@ where
     ///
     /// Time complexity: O(1).
     pub fn get(&self) -> SlotHeapRef<'_, T> {
-        (self.from.inner.read(), self.id).into()
+        (self.from.read(), self.id).into()
     }
 
     /// Returns a mutable reference to the element; heap is re-heapified on drop if mutated.
     ///
     /// Time complexity: O(1) for access; O(log n) on drop if the value was mutated.
     pub fn get_mut(&self) -> SlotHeapRefMut<'_, T> {
-        (self.from.inner.write(), self.id).into()
+        (self.from.write(), self.id).into()
     }
 }
 
@@ -152,13 +128,9 @@ where
     T: PartialOrd,
 {
     fn drop(&mut self) {
-        if let Some(mut guard) = self.from.inner.try_write() {
-            unsafe { guard.remove_unchecked(self.id) };
-        } else {
-            unsafe { self.from.delete.0.send(self.id).unwrap_unchecked() };
-        }
-
-        self.from.len.fetch_sub(1, Ordering::Relaxed);
+        let mut guard = self.from.write();
+        unsafe { guard.remove_unchecked(self.id) };
+        drop(guard);
         unsafe { ManuallyDrop::drop(&mut self.from) }
     }
 }

@@ -9,6 +9,5 @@ repository = "https://github.com/kimhappy/deadlock"
 readme = "README.md"
 
 [dependencies]
-crossbeam-channel = "0.5"
 parking_lot = "0.12"
 triomphe = "0.1"
