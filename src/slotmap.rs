@@ -5,6 +5,7 @@ use std::{
     iter,
     mem::{self, ManuallyDrop},
     ops::{Deref, DerefMut},
+    ptr::NonNull,
     sync::atomic::{AtomicUsize, Ordering},
 };
 use triomphe::Arc;
@@ -39,7 +40,8 @@ impl<T> SlotMap<T> {
     ///
     /// Time complexity: O(1) amortized (shard count is cached once).
     pub fn new() -> Self {
-        unsafe { Self::new_unchecked(util::default_num_shards()) }
+        let num_shards = util::default_num_shards();
+        unsafe { Self::new_unchecked(num_shards) }
     }
 
     /// Returns the number of entries in the map.
@@ -74,6 +76,68 @@ impl<T> SlotMap<T> {
         shard.len.fetch_add(1, Ordering::Relaxed);
 
         SlotMapId { from, id }
+    }
+
+    /// Creates an iterator over immutable references to values in the map.
+    ///
+    /// Each call to `next()` acquires and releases a read lock for each individual element.
+    /// For better performance when iterating many elements, consider using [`arc_iter`](SlotMap::arc_iter)
+    /// which holds a lock per shard.
+    ///
+    /// Time complexity: O(n) where n is the number of elements.
+    pub fn iter(&self) -> SlotMapIter<'_, T> {
+        SlotMapIter {
+            shards: &self.shards,
+            shard_index: 0,
+            inner_index: 0,
+        }
+    }
+
+    /// Creates an iterator over mutable references to values in the map.
+    ///
+    /// Each call to `next()` acquires and releases a write lock for each individual element.
+    /// For better performance when iterating many elements, consider using [`arc_iter_mut`](SlotMap::arc_iter_mut)
+    /// which holds a lock per shard.
+    ///
+    /// Time complexity: O(n) where n is the number of elements.
+    pub fn iter_mut(&self) -> SlotMapIterMut<'_, T> {
+        SlotMapIterMut {
+            shards: &self.shards,
+            shard_index: 0,
+            inner_index: 0,
+        }
+    }
+
+    /// Creates a shard-aware iterator over immutable references to values in the map.
+    ///
+    /// This iterator acquires a read lock per shard and holds it while iterating through
+    /// all elements in that shard, then moves to the next shard. This is more efficient
+    /// than [`iter`](SlotMap::iter) which acquires/releases a lock for each element.
+    ///
+    /// Time complexity: O(n) where n is the number of elements.
+    pub fn arc_iter(&self) -> SlotMapArcIter<'_, T> {
+        SlotMapArcIter {
+            shards: &self.shards,
+            shard_index: 0,
+            guard: None,
+            inner_index: 0,
+        }
+    }
+
+    /// Creates a shard-aware iterator over mutable references to values in the map.
+    ///
+    /// This iterator acquires a write lock per shard and holds it while iterating through
+    /// all elements in that shard, then moves to the next shard. This is more efficient
+    /// than [`iter_mut`](SlotMap::iter_mut) which acquires/releases a lock for each element.
+    ///
+    /// Time complexity: O(n) where n is the number of elements.
+    pub fn arc_iter_mut(&self) -> SlotMapArcIterMut<'_, T> {
+        SlotMapArcIterMut {
+            shards: &self.shards,
+            shard_index: 0,
+            guard: None,
+            inner_index: 0,
+        }
     }
 
     unsafe fn new_unchecked(num_shards: usize) -> Self {
@@ -137,7 +201,8 @@ impl<T> SlotMapId<T> {
     /// Time complexity: O(1).
     pub fn get(&self) -> SlotMapRef<'_, T> {
         let guard = self.from.inner.read();
-        (guard, self.id).into()
+        let ptr = unsafe { guard.get_unchecked_ptr(self.id) };
+        SlotMapRef { _guard: guard, ptr }
     }
 
     /// Returns a mutable reference to the value, holding a write lock until the ref is dropped.
@@ -145,7 +210,8 @@ impl<T> SlotMapId<T> {
     /// Time complexity: O(1).
     pub fn get_mut(&self) -> SlotMapRefMut<'_, T> {
         let guard = self.from.inner.write();
-        (guard, self.id).into()
+        let ptr = unsafe { guard.get_unchecked_ptr(self.id) };
+        SlotMapRefMut { _guard: guard, ptr }
     }
 }
 
@@ -161,21 +227,15 @@ impl<T> Drop for SlotMapId<T> {
 
 /// Immutable reference to a value in a [`SlotMap`], holding a read lock.
 pub struct SlotMapRef<'a, T> {
-    guard: RwLockReadGuard<'a, inner::SlotMap<T>>,
-    id: usize,
-}
-
-impl<'a, T> From<(RwLockReadGuard<'a, inner::SlotMap<T>>, usize)> for SlotMapRef<'a, T> {
-    fn from((guard, id): (RwLockReadGuard<'a, inner::SlotMap<T>>, usize)) -> Self {
-        Self { guard, id }
-    }
+    _guard: RwLockReadGuard<'a, inner::SlotMap<T>>,
+    ptr: NonNull<T>,
 }
 
 impl<T> Deref for SlotMapRef<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { self.guard.get_unchecked(self.id) }
+        unsafe { self.ptr.as_ref() }
     }
 }
 
@@ -187,21 +247,15 @@ impl<T> AsRef<T> for SlotMapRef<'_, T> {
 
 /// Mutable reference to a value in a [`SlotMap`], holding a write lock.
 pub struct SlotMapRefMut<'a, T> {
-    guard: RwLockWriteGuard<'a, inner::SlotMap<T>>,
-    id: usize,
-}
-
-impl<'a, T> From<(RwLockWriteGuard<'a, inner::SlotMap<T>>, usize)> for SlotMapRefMut<'a, T> {
-    fn from((guard, id): (RwLockWriteGuard<'a, inner::SlotMap<T>>, usize)) -> Self {
-        Self { guard, id }
-    }
+    _guard: RwLockWriteGuard<'a, inner::SlotMap<T>>,
+    ptr: NonNull<T>,
 }
 
 impl<T> Deref for SlotMapRefMut<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { self.guard.get_unchecked(self.id) }
+        unsafe { self.ptr.as_ref() }
     }
 }
 
@@ -213,7 +267,7 @@ impl<T> AsRef<T> for SlotMapRefMut<'_, T> {
 
 impl<T> DerefMut for SlotMapRefMut<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { self.guard.get_unchecked_mut(self.id) }
+        unsafe { self.ptr.as_mut() }
     }
 }
 
@@ -222,3 +276,257 @@ impl<T> AsMut<T> for SlotMapRefMut<'_, T> {
         self.deref_mut()
     }
 }
+
+/// Immutable reference with Arc-wrapped read lock for use in [`SlotMapArcIter`].
+///
+/// Unlike [`SlotMapRef`], this type wraps the lock guard in an [`Arc`], allowing
+/// the lock to be shared across multiple references while iterating through a shard.
+pub struct SlotMapArcRef<'a, T> {
+    _guard: Arc<RwLockReadGuard<'a, inner::SlotMap<T>>>,
+    ptr: NonNull<T>,
+}
+
+impl<T> Deref for SlotMapArcRef<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.ptr.as_ref() }
+    }
+}
+
+impl<T> AsRef<T> for SlotMapArcRef<'_, T> {
+    fn as_ref(&self) -> &T {
+        self.deref()
+    }
+}
+
+/// Mutable reference with Arc-wrapped write lock for use in [`SlotMapArcIterMut`].
+///
+/// Unlike [`SlotMapRefMut`], this type wraps the lock guard in an [`Arc`], allowing
+/// the lock to be shared across multiple references while iterating through a shard.
+pub struct SlotMapArcRefMut<'a, T> {
+    _guard: Arc<RwLockWriteGuard<'a, inner::SlotMap<T>>>,
+    ptr: NonNull<T>,
+}
+
+impl<T> Deref for SlotMapArcRefMut<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.ptr.as_ref() }
+    }
+}
+
+impl<T> AsRef<T> for SlotMapArcRefMut<'_, T> {
+    fn as_ref(&self) -> &T {
+        self.deref()
+    }
+}
+
+impl<T> DerefMut for SlotMapArcRefMut<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { self.ptr.as_mut() }
+    }
+}
+
+impl<T> AsMut<T> for SlotMapArcRefMut<'_, T> {
+    fn as_mut(&mut self) -> &mut T {
+        self.deref_mut()
+    }
+}
+
+/// Iterator over immutable references to values in a [`SlotMap`].
+///
+/// Created by [`SlotMap::iter`]. Each call to [`next`](Iterator::next) acquires and releases
+/// a read lock for a single element. This allows fine-grained locking but may have overhead
+/// when iterating many elements.
+///
+/// For better performance when iterating through many elements, consider using
+/// [`SlotMap::arc_iter`] which holds a lock per shard.
+pub struct SlotMapIter<'a, T> {
+    shards: &'a [Arc<Shard<T>>],
+    shard_index: usize,
+    inner_index: usize,
+}
+
+impl<'a, T> Iterator for SlotMapIter<'a, T> {
+    type Item = SlotMapRef<'a, T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(loop {
+            let shard = self.shards.get(self.shard_index)?;
+            let guard = shard.inner.read();
+
+            if self.inner_index == guard.len() {
+                self.shard_index += 1;
+                self.inner_index = 0;
+                continue;
+            }
+
+            let ptr = unsafe { guard.get_unchecked_nth_ptr(self.inner_index) };
+            self.inner_index += 1;
+            break SlotMapRef { _guard: guard, ptr };
+        })
+    }
+}
+
+/// Iterator over mutable references to values in a [`SlotMap`].
+///
+/// Created by [`SlotMap::iter_mut`]. Each call to [`next`](Iterator::next) acquires and releases
+/// a write lock for a single element. This allows fine-grained locking but may have overhead
+/// when iterating many elements.
+///
+/// For better performance when iterating through many elements, consider using
+/// [`SlotMap::arc_iter_mut`] which holds a lock per shard.
+pub struct SlotMapIterMut<'a, T> {
+    shards: &'a [Arc<Shard<T>>],
+    shard_index: usize,
+    inner_index: usize,
+}
+
+impl<'a, T> Iterator for SlotMapIterMut<'a, T> {
+    type Item = SlotMapRefMut<'a, T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(loop {
+            let shard = self.shards.get(self.shard_index)?;
+            let guard = shard.inner.write();
+
+            if self.inner_index == guard.len() {
+                self.shard_index += 1;
+                self.inner_index = 0;
+                continue;
+            }
+
+            let ptr = unsafe { guard.get_unchecked_nth_ptr(self.inner_index) };
+            self.inner_index += 1;
+            break SlotMapRefMut { _guard: guard, ptr };
+        })
+    }
+}
+
+/// Shard-aware iterator over immutable references to values in a [`SlotMap`].
+///
+/// Created by [`SlotMap::arc_iter`]. This iterator acquires a read lock per shard and holds it
+/// while iterating through all elements in that shard, then moves to the next shard.
+///
+/// This is more efficient than [`SlotMapIter`] which acquires and releases a lock for each element.
+/// The lock guard is wrapped in an [`Arc`] and shared across all [`SlotMapArcRef`] items
+/// from the same shard, allowing the lock to be released only when the last reference is dropped.
+pub struct SlotMapArcIter<'a, T> {
+    shards: &'a [Arc<Shard<T>>],
+    shard_index: usize,
+    guard: Option<Arc<RwLockReadGuard<'a, inner::SlotMap<T>>>>,
+    inner_index: usize,
+}
+
+impl<'a, T> Iterator for SlotMapArcIter<'a, T> {
+    type Item = SlotMapArcRef<'a, T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(loop {
+            if self.guard.is_none() {
+                let shard = self.shards.get(self.shard_index)?;
+                self.shard_index += 1;
+                let guard = shard.inner.read();
+
+                if guard.len() == 0 {
+                    continue;
+                }
+
+                self.guard = Some(Arc::new(guard));
+            }
+
+            let guard = unsafe { self.guard.as_ref().unwrap_unchecked() };
+            let ptr = unsafe { guard.get_unchecked_nth_ptr(self.inner_index) };
+            self.inner_index += 1;
+
+            let guard = if self.inner_index == guard.len() {
+                self.inner_index = 0;
+                unsafe { self.guard.take().unwrap_unchecked() }
+            } else {
+                guard.clone()
+            };
+
+            break SlotMapArcRef { _guard: guard, ptr };
+        })
+    }
+}
+
+/// Shard-aware iterator over mutable references to values in a [`SlotMap`].
+///
+/// Created by [`SlotMap::arc_iter_mut`]. This iterator acquires a write lock per shard and holds it
+/// while iterating through all elements in that shard, then moves to the next shard.
+///
+/// This is more efficient than [`SlotMapIterMut`] which acquires and releases a lock for each element.
+/// The lock guard is wrapped in an [`Arc`] and shared across all [`SlotMapArcRefMut`] items
+/// from the same shard, allowing the lock to be released only when the last reference is dropped.
+pub struct SlotMapArcIterMut<'a, T> {
+    shards: &'a [Arc<Shard<T>>],
+    shard_index: usize,
+    guard: Option<Arc<RwLockWriteGuard<'a, inner::SlotMap<T>>>>,
+    inner_index: usize,
+}
+
+impl<'a, T> Iterator for SlotMapArcIterMut<'a, T> {
+    type Item = SlotMapArcRefMut<'a, T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        Some(loop {
+            if self.guard.is_none() {
+                let shard = self.shards.get(self.shard_index)?;
+                self.shard_index += 1;
+                let guard = shard.inner.write();
+
+                if guard.len() == 0 {
+                    continue;
+                }
+
+                self.guard = Some(Arc::new(guard));
+            }
+
+            let guard = unsafe { self.guard.as_ref().unwrap_unchecked() };
+            let ptr = unsafe { guard.get_unchecked_nth_ptr(self.inner_index) };
+            self.inner_index += 1;
+
+            let guard = if self.inner_index == guard.len() {
+                self.inner_index = 0;
+                unsafe { self.guard.take().unwrap_unchecked() }
+            } else {
+                guard.clone()
+            };
+
+            break SlotMapArcRefMut { _guard: guard, ptr };
+        })
+    }
+}
+
+unsafe impl<T> Send for SlotMap<T> where T: Send {}
+unsafe impl<T> Sync for SlotMap<T> where T: Send + Sync {}
+
+unsafe impl<T> Send for SlotMapId<T> where T: Send {}
+unsafe impl<T> Sync for SlotMapId<T> where T: Send + Sync {}
+
+unsafe impl<T> Send for SlotMapRef<'_, T> where T: Send + Sync {}
+unsafe impl<T> Sync for SlotMapRef<'_, T> where T: Send + Sync {}
+
+unsafe impl<T> Send for SlotMapRefMut<'_, T> where T: Send {}
+unsafe impl<T> Sync for SlotMapRefMut<'_, T> where T: Send + Sync {}
+
+unsafe impl<T> Send for SlotMapArcRef<'_, T> where T: Send + Sync {}
+unsafe impl<T> Sync for SlotMapArcRef<'_, T> where T: Send + Sync {}
+
+unsafe impl<T> Send for SlotMapArcRefMut<'_, T> where T: Send {}
+unsafe impl<T> Sync for SlotMapArcRefMut<'_, T> where T: Send + Sync {}
+
+unsafe impl<T> Send for SlotMapIter<'_, T> where T: Send + Sync {}
+unsafe impl<T> Sync for SlotMapIter<'_, T> where T: Send + Sync {}
+
+unsafe impl<T> Send for SlotMapIterMut<'_, T> where T: Send {}
+unsafe impl<T> Sync for SlotMapIterMut<'_, T> where T: Send + Sync {}
+
+unsafe impl<T> Send for SlotMapArcIter<'_, T> where T: Send + Sync {}
+unsafe impl<T> Sync for SlotMapArcIter<'_, T> where T: Send + Sync {}
+
+unsafe impl<T> Send for SlotMapArcIterMut<'_, T> where T: Send {}
+unsafe impl<T> Sync for SlotMapArcIterMut<'_, T> where T: Send + Sync {}

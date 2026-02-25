@@ -2,7 +2,6 @@
 
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{
-    convert::{TryFrom, TryInto},
     mem::{self, ManuallyDrop},
     ops::{Deref, DerefMut},
 };
@@ -70,7 +69,8 @@ where
     ///
     /// Time complexity: O(k) where k is the number of deferred removals, then O(1).
     pub fn peek(&self) -> Option<SlotHeapPeek<'_, T>> {
-        self.inner.read().try_into().ok()
+        let guard = self.inner.read();
+        (!guard.is_empty()).then(|| SlotHeapPeek { guard })
     }
 
     /// Returns a mutable reference to the minimum element, or `None` if the heap is empty.
@@ -79,7 +79,11 @@ where
     ///
     /// Time complexity: O(k) where k is the number of deferred removals, then O(1).
     pub fn peek_mut(&self) -> Option<SlotHeapPeekMut<'_, T>> {
-        self.inner.write().try_into().ok()
+        let guard = self.inner.write();
+        (!guard.is_empty()).then(|| SlotHeapPeekMut {
+            guard,
+            dirty: false,
+        })
     }
 }
 
@@ -112,14 +116,21 @@ where
     ///
     /// Time complexity: O(1).
     pub fn get(&self) -> SlotHeapRef<'_, T> {
-        (self.from.read(), self.id).into()
+        SlotHeapRef {
+            guard: self.from.read(),
+            id: self.id,
+        }
     }
 
     /// Returns a mutable reference to the element; heap is re-heapified on drop if mutated.
     ///
     /// Time complexity: O(1) for access; O(log n) on drop if the value was mutated.
     pub fn get_mut(&self) -> SlotHeapRefMut<'_, T> {
-        (self.from.write(), self.id).into()
+        SlotHeapRefMut {
+            guard: self.from.write(),
+            id: self.id,
+            dirty: false,
+        }
     }
 }
 
@@ -141,17 +152,6 @@ where
     T: PartialOrd,
 {
     guard: RwLockReadGuard<'a, inner::SlotHeap<T>>,
-}
-
-impl<'a, T> TryFrom<RwLockReadGuard<'a, inner::SlotHeap<T>>> for SlotHeapPeek<'a, T>
-where
-    T: PartialOrd,
-{
-    type Error = ();
-
-    fn try_from(guard: RwLockReadGuard<'a, inner::SlotHeap<T>>) -> Result<Self, Self::Error> {
-        (!guard.is_empty()).then(|| Self { guard }).ok_or(())
-    }
 }
 
 impl<T> Deref for SlotHeapPeek<'_, T>
@@ -181,22 +181,6 @@ where
 {
     guard: RwLockWriteGuard<'a, inner::SlotHeap<T>>,
     dirty: bool,
-}
-
-impl<'a, T> TryFrom<RwLockWriteGuard<'a, inner::SlotHeap<T>>> for SlotHeapPeekMut<'a, T>
-where
-    T: PartialOrd,
-{
-    type Error = ();
-
-    fn try_from(guard: RwLockWriteGuard<'a, inner::SlotHeap<T>>) -> Result<Self, Self::Error> {
-        (!guard.is_empty())
-            .then(|| Self {
-                guard,
-                dirty: false,
-            })
-            .ok_or(())
-    }
 }
 
 impl<T> Deref for SlotHeapPeekMut<'_, T>
@@ -270,15 +254,6 @@ where
     }
 }
 
-impl<'a, T> From<(RwLockReadGuard<'a, inner::SlotHeap<T>>, usize)> for SlotHeapRef<'a, T>
-where
-    T: PartialOrd,
-{
-    fn from((guard, id): (RwLockReadGuard<'a, inner::SlotHeap<T>>, usize)) -> Self {
-        Self { guard, id }
-    }
-}
-
 impl<T> Deref for SlotHeapRef<'_, T>
 where
     T: PartialOrd,
@@ -318,19 +293,6 @@ where
     /// Time complexity: O(1).
     pub fn is_top(&self) -> bool {
         unsafe { self.guard.get_unchecked_index(self.id) == 0 }
-    }
-}
-
-impl<'a, T> From<(RwLockWriteGuard<'a, inner::SlotHeap<T>>, usize)> for SlotHeapRefMut<'a, T>
-where
-    T: PartialOrd,
-{
-    fn from((guard, id): (RwLockWriteGuard<'a, inner::SlotHeap<T>>, usize)) -> Self {
-        Self {
-            guard,
-            id,
-            dirty: false,
-        }
     }
 }
 
@@ -384,3 +346,21 @@ where
         }
     }
 }
+
+unsafe impl<T> Send for SlotHeap<T> where T: Send + PartialOrd {}
+unsafe impl<T> Sync for SlotHeap<T> where T: Send + Sync + PartialOrd {}
+
+unsafe impl<T> Send for SlotHeapId<T> where T: Send + PartialOrd {}
+unsafe impl<T> Sync for SlotHeapId<T> where T: Send + Sync + PartialOrd {}
+
+unsafe impl<T> Send for SlotHeapPeek<'_, T> where T: Send + Sync + PartialOrd {}
+unsafe impl<T> Sync for SlotHeapPeek<'_, T> where T: Send + Sync + PartialOrd {}
+
+unsafe impl<T> Send for SlotHeapPeekMut<'_, T> where T: Send + PartialOrd {}
+unsafe impl<T> Sync for SlotHeapPeekMut<'_, T> where T: Send + Sync + PartialOrd {}
+
+unsafe impl<T> Send for SlotHeapRef<'_, T> where T: Send + Sync + PartialOrd {}
+unsafe impl<T> Sync for SlotHeapRef<'_, T> where T: Send + Sync + PartialOrd {}
+
+unsafe impl<T> Send for SlotHeapRefMut<'_, T> where T: Send + PartialOrd {}
+unsafe impl<T> Sync for SlotHeapRefMut<'_, T> where T: Send + Sync + PartialOrd {}

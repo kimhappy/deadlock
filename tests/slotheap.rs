@@ -1,5 +1,18 @@
 use deadlock::SlotHeap;
-use std::collections::HashSet;
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+    thread,
+};
+
+fn _assert_send<T: Send>() {}
+fn _assert_sync<T: Sync>() {}
+
+#[allow(dead_code)]
+fn _compile_time_trait_checks() {
+    _assert_send::<SlotHeap<i32>>();
+    _assert_sync::<SlotHeap<i32>>();
+}
 
 #[test]
 fn empty_heap_peek_is_none() {
@@ -209,4 +222,51 @@ fn insert_returns_is_top_when_new_min() {
     assert!(!top3);
 
     assert_eq!(*heap.peek().unwrap(), 3);
+}
+
+#[test]
+fn send_sync_multi_threaded_insert() {
+    let heap = Arc::new(SlotHeap::new());
+    let ids = Arc::new(Mutex::new(Vec::new()));
+    let handles = (0..8)
+        .map(|i| {
+            let heap = heap.clone();
+            let ids = ids.clone();
+
+            thread::spawn(move || {
+                let local_ids = (0..100)
+                    .map(|j| heap.insert(i * 100 + j).0)
+                    .collect::<Vec<_>>();
+                ids.lock().unwrap().extend(local_ids)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for handle in handles {
+        handle.join().unwrap()
+    }
+
+    assert_eq!(heap.len(), 800)
+}
+
+#[test]
+fn send_sync_multi_threaded_peek() {
+    let heap = Arc::new(SlotHeap::new());
+    let _ids = (0..100).map(|i| heap.insert(i).0).collect::<Vec<_>>();
+
+    let handles = (0..8)
+        .map(|_| {
+            let heap = heap.clone();
+
+            thread::spawn(move || {
+                if let Some(min) = heap.peek() {
+                    assert!(*min < 100)
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for handle in handles {
+        handle.join().unwrap()
+    }
 }

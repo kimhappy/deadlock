@@ -1,6 +1,9 @@
 use std::cmp::Ordering;
 
-use crate::{inner::SlotMap, util};
+use crate::{
+    inner::SlotMap,
+    util::{SliceExt, VecExt},
+};
 
 pub struct SlotHeap<T> {
     ids: Vec<usize>,
@@ -26,31 +29,11 @@ where
         self.entries.len() == 0
     }
 
-    pub fn contains(&self, id: usize) -> bool {
-        self.entries.contains(id)
-    }
-
     pub fn insert(&mut self, value: T) -> (usize, bool) {
         let id = self.entries.insert((value, self.ids.len()));
         self.ids.push(id);
         let index = unsafe { self.heapify_up(self.ids.len() - 1) };
         (id, index == 0)
-    }
-
-    pub unsafe fn pop_unchecked(&mut self) -> T {
-        unsafe {
-            if self.entries.len() == 1 {
-                let id = self.ids.pop().unwrap_unchecked();
-                return self.entries.remove_unchecked(id).0;
-            }
-
-            let head_id = util::swap_remove_unchecked(&mut self.ids, 0);
-            let tail_id = self.ids.get_unchecked(0);
-            let value = self.entries.remove_unchecked(head_id).0;
-            self.entries.get_unchecked_mut(*tail_id).1 = 0;
-            self.heapify_down(0);
-            value
-        }
     }
 
     pub unsafe fn remove_unchecked(&mut self, id: usize) -> (T, bool) {
@@ -60,10 +43,10 @@ where
             if index == self.ids.len() - 1 {
                 self.ids.set_len(self.ids.len() - 1)
             } else {
-                util::swap_remove_unchecked(&mut self.ids, index);
+                self.ids.swap_remove_unchecked_(index);
                 let tail = self.ids.get_unchecked(index);
                 self.entries.get_unchecked_mut(*tail).1 = index;
-                self.heapify(index);
+                self.heapify(index)
             }
 
             (value, index == 0)
@@ -158,7 +141,7 @@ where
             let id1 = self.ids.get_unchecked(index1);
             self.entries.get_unchecked_mut(*id0).1 = index1;
             self.entries.get_unchecked_mut(*id1).1 = index0;
-            util::swap_unchecked(&mut self.ids, index0, index1);
+            self.ids.swap_unchecked_(index0, index1)
         }
     }
 

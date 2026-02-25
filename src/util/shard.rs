@@ -17,5 +17,5 @@ pub fn default_num_shards() -> usize {
         }
     });
 
-    unsafe { (*CACHE.0.get()).assume_init_read() }
+    unsafe { *(*CACHE.0.get()).assume_init_ref() }
 }
