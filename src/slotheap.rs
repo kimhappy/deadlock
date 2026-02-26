@@ -1,10 +1,7 @@
 //! Thread-safe slot min-heap with stable RAII handle.
 
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::{
-    mem::{self, ManuallyDrop},
-    ops::{Deref, DerefMut},
-};
+use std::mem::{self, ManuallyDrop};
 use triomphe::Arc;
 
 use crate::inner;
@@ -154,23 +151,13 @@ where
     guard: RwLockReadGuard<'a, inner::SlotHeap<T>>,
 }
 
-impl<T> Deref for SlotHeapPeek<'_, T>
+#[reflica::reflica]
+impl<T> SlotHeapPeek<'_, T>
 where
     T: PartialOrd,
 {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
+    fn deref(&self) -> &T {
         unsafe { self.guard.peek_unchecked() }
-    }
-}
-
-impl<T> AsRef<T> for SlotHeapPeek<'_, T>
-where
-    T: PartialOrd,
-{
-    fn as_ref(&self) -> &T {
-        self.deref()
     }
 }
 
@@ -183,42 +170,18 @@ where
     dirty: bool,
 }
 
-impl<T> Deref for SlotHeapPeekMut<'_, T>
+#[reflica::reflica]
+impl<T> SlotHeapPeekMut<'_, T>
 where
     T: PartialOrd,
 {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
+    fn deref(&self) -> &T {
         unsafe { self.guard.peek_unchecked() }
     }
-}
 
-impl<T> AsRef<T> for SlotHeapPeekMut<'_, T>
-where
-    T: PartialOrd,
-{
-    fn as_ref(&self) -> &T {
-        self.deref()
-    }
-}
-
-impl<T> DerefMut for SlotHeapPeekMut<'_, T>
-where
-    T: PartialOrd,
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
+    fn deref_mut(&mut self) -> &mut T {
         self.dirty = true;
         unsafe { self.guard.peek_unchecked_mut() }
-    }
-}
-
-impl<T> AsMut<T> for SlotHeapPeekMut<'_, T>
-where
-    T: PartialOrd,
-{
-    fn as_mut(&mut self) -> &mut T {
-        self.deref_mut()
     }
 }
 
@@ -242,6 +205,7 @@ where
     id: usize,
 }
 
+#[reflica::reflica]
 impl<T> SlotHeapRef<'_, T>
 where
     T: PartialOrd,
@@ -252,25 +216,9 @@ where
     pub fn is_top(&self) -> bool {
         unsafe { self.guard.get_unchecked_index(self.id) == 0 }
     }
-}
 
-impl<T> Deref for SlotHeapRef<'_, T>
-where
-    T: PartialOrd,
-{
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
+    fn deref(&self) -> &T {
         unsafe { self.guard.get_unchecked(self.id) }
-    }
-}
-
-impl<T> AsRef<T> for SlotHeapRef<'_, T>
-where
-    T: PartialOrd,
-{
-    fn as_ref(&self) -> &T {
-        self.deref()
     }
 }
 
@@ -284,6 +232,7 @@ where
     dirty: bool,
 }
 
+#[reflica::reflica]
 impl<T> SlotHeapRefMut<'_, T>
 where
     T: PartialOrd,
@@ -294,44 +243,14 @@ where
     pub fn is_top(&self) -> bool {
         unsafe { self.guard.get_unchecked_index(self.id) == 0 }
     }
-}
 
-impl<T> Deref for SlotHeapRefMut<'_, T>
-where
-    T: PartialOrd,
-{
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
+    fn deref(&self) -> &T {
         unsafe { self.guard.get_unchecked(self.id) }
     }
-}
 
-impl<T> AsRef<T> for SlotHeapRefMut<'_, T>
-where
-    T: PartialOrd,
-{
-    fn as_ref(&self) -> &T {
-        self.deref()
-    }
-}
-
-impl<T> DerefMut for SlotHeapRefMut<'_, T>
-where
-    T: PartialOrd,
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
+    fn deref_mut(&mut self) -> &mut T {
         self.dirty = true;
         unsafe { self.guard.get_unchecked_mut(self.id) }
-    }
-}
-
-impl<T> AsMut<T> for SlotHeapRefMut<'_, T>
-where
-    T: PartialOrd,
-{
-    fn as_mut(&mut self) -> &mut T {
-        self.deref_mut()
     }
 }
 

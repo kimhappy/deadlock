@@ -11,3 +11,5 @@ readme = "README.md"
 [dependencies]
 parking_lot = "0.12"
 triomphe = "0.1"
+easy-ext = "1"
+reflica = "0.2"
