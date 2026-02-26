@@ -4,7 +4,6 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{
     iter,
     mem::{self, ManuallyDrop},
-    ops::{Deref, DerefMut},
     ptr::NonNull,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -231,17 +230,10 @@ pub struct SlotMapRef<'a, T> {
     ptr: NonNull<T>,
 }
 
-impl<T> Deref for SlotMapRef<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
+#[reflica::reflica]
+impl<T> SlotMapRef<'_, T> {
+    fn deref(&self) -> &T {
         unsafe { self.ptr.as_ref() }
-    }
-}
-
-impl<T> AsRef<T> for SlotMapRef<'_, T> {
-    fn as_ref(&self) -> &T {
-        self.deref()
     }
 }
 
@@ -251,29 +243,14 @@ pub struct SlotMapRefMut<'a, T> {
     ptr: NonNull<T>,
 }
 
-impl<T> Deref for SlotMapRefMut<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
+#[reflica::reflica]
+impl<T> SlotMapRefMut<'_, T> {
+    fn deref(&self) -> &T {
         unsafe { self.ptr.as_ref() }
     }
-}
 
-impl<T> AsRef<T> for SlotMapRefMut<'_, T> {
-    fn as_ref(&self) -> &T {
-        self.deref()
-    }
-}
-
-impl<T> DerefMut for SlotMapRefMut<'_, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
+    fn deref_mut(&mut self) -> &mut T {
         unsafe { self.ptr.as_mut() }
-    }
-}
-
-impl<T> AsMut<T> for SlotMapRefMut<'_, T> {
-    fn as_mut(&mut self) -> &mut T {
-        self.deref_mut()
     }
 }
 
@@ -286,17 +263,10 @@ pub struct SlotMapArcRef<'a, T> {
     ptr: NonNull<T>,
 }
 
-impl<T> Deref for SlotMapArcRef<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
+#[reflica::reflica]
+impl<T> SlotMapArcRef<'_, T> {
+    fn deref(&self) -> &T {
         unsafe { self.ptr.as_ref() }
-    }
-}
-
-impl<T> AsRef<T> for SlotMapArcRef<'_, T> {
-    fn as_ref(&self) -> &T {
-        self.deref()
     }
 }
 
@@ -309,29 +279,14 @@ pub struct SlotMapArcRefMut<'a, T> {
     ptr: NonNull<T>,
 }
 
-impl<T> Deref for SlotMapArcRefMut<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
+#[reflica::reflica]
+impl<T> SlotMapArcRefMut<'_, T> {
+    fn deref(&self) -> &T {
         unsafe { self.ptr.as_ref() }
     }
-}
 
-impl<T> AsRef<T> for SlotMapArcRefMut<'_, T> {
-    fn as_ref(&self) -> &T {
-        self.deref()
-    }
-}
-
-impl<T> DerefMut for SlotMapArcRefMut<'_, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
+    fn deref_mut(&mut self) -> &mut T {
         unsafe { self.ptr.as_mut() }
-    }
-}
-
-impl<T> AsMut<T> for SlotMapArcRefMut<'_, T> {
-    fn as_mut(&mut self) -> &mut T {
-        self.deref_mut()
     }
 }
 
@@ -357,7 +312,7 @@ impl<'a, T> Iterator for SlotMapIter<'a, T> {
             let shard = self.shards.get(self.shard_index)?;
             let guard = shard.inner.read();
 
-            if self.inner_index == guard.len() {
+            if self.inner_index >= guard.len() {
                 self.shard_index += 1;
                 self.inner_index = 0;
                 continue;
@@ -392,7 +347,7 @@ impl<'a, T> Iterator for SlotMapIterMut<'a, T> {
             let shard = self.shards.get(self.shard_index)?;
             let guard = shard.inner.write();
 
-            if self.inner_index == guard.len() {
+            if self.inner_index >= guard.len() {
                 self.shard_index += 1;
                 self.inner_index = 0;
                 continue;
@@ -441,7 +396,7 @@ impl<'a, T> Iterator for SlotMapArcIter<'a, T> {
             let ptr = unsafe { guard.get_unchecked_nth_ptr(self.inner_index) };
             self.inner_index += 1;
 
-            let guard = if self.inner_index == guard.len() {
+            let guard = if self.inner_index >= guard.len() {
                 self.inner_index = 0;
                 unsafe { self.guard.take().unwrap_unchecked() }
             } else {
@@ -489,7 +444,7 @@ impl<'a, T> Iterator for SlotMapArcIterMut<'a, T> {
             let ptr = unsafe { guard.get_unchecked_nth_ptr(self.inner_index) };
             self.inner_index += 1;
 
-            let guard = if self.inner_index == guard.len() {
+            let guard = if self.inner_index >= guard.len() {
                 self.inner_index = 0;
                 unsafe { self.guard.take().unwrap_unchecked() }
             } else {
