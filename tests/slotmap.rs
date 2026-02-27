@@ -1,16 +1,52 @@
-use deadlock::SlotMap;
+use deadlock::{
+    SlotMap, SlotMapId, SlotMapIter, SlotMapIterMut, SlotMapRef, SlotMapRefMut, SlotMapShardRef,
+};
 use std::{
+    iter,
     sync::{Arc, Mutex},
     thread,
 };
 
-fn _assert_send<T: Send>() {}
-fn _assert_sync<T: Sync>() {}
+fn _slotmap_send_sync_checks<'a>() {
+    fn assert_send_sync<T: Send + Sync>() {}
 
-#[allow(dead_code)]
-fn _compile_time_trait_checks() {
-    _assert_send::<SlotMap<i32>>();
-    _assert_sync::<SlotMap<i32>>();
+    assert_send_sync::<SlotMap<i32>>();
+    assert_send_sync::<SlotMapId<i32>>();
+    assert_send_sync::<SlotMapRef<'a, i32>>();
+    assert_send_sync::<SlotMapRefMut<'a, i32>>();
+    assert_send_sync::<SlotMapShardRef<'a, i32>>();
+    assert_send_sync::<SlotMapIter<'a, i32>>();
+    assert_send_sync::<SlotMapIterMut<'a, i32>>()
+}
+
+#[test]
+fn shards_iter_yields_all_entries() {
+    let map = SlotMap::new();
+    let n = 64_i32;
+    let _ids = (0..n).map(|i| map.insert(i * 5)).collect::<Vec<_>>();
+
+    let mut collected = map
+        .shards()
+        .flat_map(|shard| shard.iter().copied().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    collected.sort_unstable();
+
+    assert_eq!(collected.len(), n as usize);
+    assert_eq!(collected, (0..n).map(|i| i * 5).collect::<Vec<_>>())
+}
+
+#[test]
+fn shards_total_count_matches_len() {
+    let map = SlotMap::new();
+    let n = 48;
+    let _ids = (0..n).map(|i| map.insert(i)).collect::<Vec<_>>();
+
+    let total = map
+        .shards()
+        .map(|shard| shard.iter().count())
+        .sum::<usize>();
+    assert_eq!(total, n);
+    assert_eq!(total, map.len())
 }
 
 #[test]
@@ -108,9 +144,10 @@ fn iter_yields_all_entries() {
 
     let collected = map.iter().map(|r| *r).collect::<Vec<_>>();
     assert_eq!(collected.len(), n);
+
     let mut sorted = collected;
     sorted.sort_unstable();
-    assert_eq!(sorted, (0..n).map(|i| i * 10).collect::<Vec<_>>());
+    assert_eq!(sorted, (0..n).map(|i| i * 10).collect::<Vec<_>>())
 }
 
 #[test]
@@ -125,62 +162,33 @@ fn iter_mut_modifies_values() {
     let collected = map.iter().map(|r| *r).collect::<Vec<_>>();
     let mut sorted = collected;
     sorted.sort_unstable();
-    assert_eq!(sorted, (100..108).collect::<Vec<_>>());
-}
-
-#[test]
-fn shard_iter_yields_all_entries() {
-    let map = SlotMap::new();
-    let n = 32;
-    let _ids = (0..n).map(|i| map.insert(i * 10)).collect::<Vec<_>>();
-
-    let collected = map.arc_iter().map(|r| *r).collect::<Vec<_>>();
-    assert_eq!(collected.len(), n);
-    let mut sorted = collected;
-    sorted.sort_unstable();
-    assert_eq!(sorted, (0..n).map(|i| i * 10).collect::<Vec<_>>());
-}
-
-#[test]
-fn shard_iter_mut_modifies_values() {
-    let map = SlotMap::new();
-    let _ids = (0..8).map(|i| map.insert(i)).collect::<Vec<_>>();
-
-    for mut r in map.arc_iter_mut() {
-        *r += 100;
-    }
-
-    let collected = map.iter().map(|r| *r).collect::<Vec<_>>();
-    let mut sorted = collected;
-    sorted.sort_unstable();
-    assert_eq!(sorted, (100..108).collect::<Vec<_>>());
+    assert_eq!(sorted, (100..108).collect::<Vec<_>>())
 }
 
 #[test]
 fn send_sync_multi_threaded_insert() {
     let map = Arc::new(SlotMap::new());
     let ids = Arc::new(Mutex::new(Vec::new()));
-    let mut handles = vec![];
+    let handles = (0..4)
+        .map(|i| {
+            let map = map.clone();
+            let ids = ids.clone();
 
-    for i in 0..4 {
-        let map_clone = map.clone();
-        let ids_clone = ids.clone();
-        let handle = thread::spawn(move || {
-            let mut local_ids = Vec::new();
-            for j in 0..100 {
-                local_ids.push(map_clone.insert(i * 100 + j));
-            }
-            ids_clone.lock().unwrap().extend(local_ids);
-        });
-        handles.push(handle);
-    }
+            thread::spawn(move || {
+                let local_ids = (0..100)
+                    .map(|j| map.insert(i * 100 + j))
+                    .collect::<Vec<_>>();
+                ids.lock().unwrap().extend(local_ids)
+            })
+        })
+        .take(4)
+        .collect::<Vec<_>>();
 
     for handle in handles {
-        handle.join().unwrap();
+        handle.join().unwrap()
     }
 
-    assert_eq!(map.len(), 400);
-    drop(ids);
+    assert_eq!(map.len(), 400)
 }
 
 #[test]
@@ -188,17 +196,18 @@ fn send_sync_multi_threaded_iter() {
     let map = Arc::new(SlotMap::new());
     let _ids = (0..100).map(|i| map.insert(i)).collect::<Vec<_>>();
 
-    let mut handles = vec![];
-    for _ in 0..4 {
-        let map_clone = map.clone();
-        let handle = thread::spawn(move || {
-            let count = map_clone.iter().count();
-            assert_eq!(count, 100);
-        });
-        handles.push(handle);
-    }
+    let handles = iter::repeat_with(|| {
+        let map = map.clone();
+
+        thread::spawn(move || {
+            let count = map.iter().count();
+            assert_eq!(count, 100)
+        })
+    })
+    .take(4)
+    .collect::<Vec<_>>();
 
     for handle in handles {
-        handle.join().unwrap();
+        handle.join().unwrap()
     }
 }

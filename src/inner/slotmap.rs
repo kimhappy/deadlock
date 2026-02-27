@@ -73,14 +73,13 @@ impl<T> SlotMap<T> {
         unsafe { self.entries.add(id).as_mut().value.assume_init_mut() }
     }
 
-    pub unsafe fn get_unchecked_ptr(&self, id: usize) -> NonNull<T> {
-        let entry = unsafe { self.entries.add(id).as_mut() };
-        unsafe { NonNull::new_unchecked(entry.value.as_mut_ptr()) }
+    pub unsafe fn get_unchecked_nth(&self, index: usize) -> &T {
+        let id = unsafe { self.get_unchecked_nth_id(index) };
+        unsafe { self.get_unchecked(id) }
     }
 
-    pub unsafe fn get_unchecked_nth_ptr(&self, index: usize) -> NonNull<T> {
-        let id = unsafe { self.entries.add(index).as_ref().id };
-        unsafe { self.get_unchecked_ptr(id) }
+    pub unsafe fn get_unchecked_nth_id(&self, index: usize) -> usize {
+        unsafe { self.entries.add(index).as_ref().id }
     }
 
     unsafe fn grow(&mut self) {
@@ -128,11 +127,5 @@ impl<T> Drop for SlotMap<T> {
             let layout = Layout::array::<Entry<T>>(self.capacity).unwrap_unchecked();
             alloc::dealloc(self.entries.as_ptr() as *mut u8, layout)
         }
-    }
-}
-
-impl<T> Default for SlotMap<T> {
-    fn default() -> Self {
-        Self::new()
     }
 }

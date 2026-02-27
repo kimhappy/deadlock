@@ -8,21 +8,9 @@ use crate::inner;
 
 /// Thread-safe slot min-heap with stable RAII handle.
 ///
-/// Elements are ordered by `T`'s [`PartialOrd`]. The minimum is at the top and can be read or
-/// mutated via [`peek`](SlotHeap::peek) / [`peek_mut`](SlotHeap::peek_mut).
+/// Stores values in slots and returns [`SlotHeapId`].
 pub struct SlotHeap<T> {
     inner: Arc<RwLock<inner::SlotHeap<T>>>,
-}
-
-/// Stable handle to an element in a [`SlotHeap`].
-///
-/// Dropping it removes the element from the heap (deferred under contention).
-pub struct SlotHeapId<T>
-where
-    T: PartialOrd,
-{
-    from: ManuallyDrop<Arc<RwLock<inner::SlotHeap<T>>>>,
-    id: usize,
 }
 
 impl<T> SlotHeap<T>
@@ -30,8 +18,6 @@ where
     T: PartialOrd,
 {
     /// Creates a new empty min-heap.
-    ///
-    /// Time complexity: O(1).
     pub fn new() -> Self {
         Self {
             inner: Arc::new(inner::SlotHeap::new().into()),
@@ -40,21 +26,21 @@ where
 
     /// Returns the number of elements in the heap.
     ///
-    /// Time complexity: O(1).
+    /// Time complexity: O(1)
     pub fn len(&self) -> usize {
         self.inner.read().len()
     }
 
     /// Returns whether the heap is empty.
     ///
-    /// Time complexity: O(1).
+    /// Time complexity: O(1)
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Inserts a value and returns its handle and whether it became the new minimum.
     ///
-    /// Time complexity: O(log n).
+    /// Time complexity: O(log n)
     pub fn insert(&self, value: T) -> (SlotHeapId<T>, bool) {
         let from = ManuallyDrop::new(self.inner.clone());
         let mut guard = self.inner.write();
@@ -64,7 +50,7 @@ where
 
     /// Returns a shared reference to the minimum element, or `None` if the heap is empty.
     ///
-    /// Time complexity: O(k) where k is the number of deferred removals, then O(1).
+    /// Time complexity: O(1)
     pub fn peek(&self) -> Option<SlotHeapPeek<'_, T>> {
         let guard = self.inner.read();
         (!guard.is_empty()).then(|| SlotHeapPeek { guard })
@@ -74,7 +60,7 @@ where
     ///
     /// If the minimum is mutated, the heap is re-heapified on drop of the returned guard.
     ///
-    /// Time complexity: O(k) where k is the number of deferred removals, then O(1).
+    /// Time complexity: O(1)
     pub fn peek_mut(&self) -> Option<SlotHeapPeekMut<'_, T>> {
         let guard = self.inner.write();
         (!guard.is_empty()).then(|| SlotHeapPeekMut {
@@ -93,13 +79,24 @@ where
     }
 }
 
+/// Stable RAII handle to an value in a [`SlotHeap`].
+///
+/// Dropping it removes the value from the heap.
+pub struct SlotHeapId<T>
+where
+    T: PartialOrd,
+{
+    from: ManuallyDrop<Arc<RwLock<inner::SlotHeap<T>>>>,
+    id: usize,
+}
+
 impl<T> SlotHeapId<T>
 where
     T: PartialOrd,
 {
-    /// Removes the element from the heap and returns it and whether it was the minimum.
+    /// Takes the value out of the heap with consuming self and returns it and whether it was the minimum.
     ///
-    /// Time complexity: O(log n).
+    /// Time complexity: O(log n)
     pub fn into_inner(mut self) -> (T, bool) {
         let mut guard = self.from.write();
         let item = unsafe { guard.remove_unchecked(self.id) };
@@ -111,7 +108,7 @@ where
 
     /// Returns an immutable reference to the element, holding a read lock until the ref is dropped.
     ///
-    /// Time complexity: O(1).
+    /// Time complexity: O(1)
     pub fn get(&self) -> SlotHeapRef<'_, T> {
         SlotHeapRef {
             guard: self.from.read(),
@@ -119,9 +116,11 @@ where
         }
     }
 
-    /// Returns a mutable reference to the element; heap is re-heapified on drop if mutated.
+    /// Returns a mutable reference to the element, holding a write lock until the ref is dropped.
     ///
-    /// Time complexity: O(1) for access; O(log n) on drop if the value was mutated.
+    /// If the value is mutated, the heap is re-heapified on drop of the returned guard.
+    ///
+    /// Time complexity: O(1)
     pub fn get_mut(&self) -> SlotHeapRefMut<'_, T> {
         SlotHeapRefMut {
             guard: self.from.write(),
@@ -161,7 +160,9 @@ where
     }
 }
 
-/// Mutable reference to the minimum element of a [`SlotHeap`]; re-heapifies on drop if dirty.
+/// Mutable reference to the minimum element of a [`SlotHeap`], holding a write lock.
+///
+/// If the value is mutated, the heap is re-heapified on drop of the returned guard.
 pub struct SlotHeapPeekMut<'a, T>
 where
     T: PartialOrd,
@@ -235,7 +236,7 @@ where
 {
     /// Returns whether this element is the current minimum (top) of the heap.
     ///
-    /// Time complexity: O(1).
+    /// Time complexity: O(1)
     pub fn is_top(&self) -> bool {
         unsafe { self.guard.get_unchecked_index(self.id) == 0 }
     }
@@ -245,7 +246,9 @@ where
     }
 }
 
-/// Mutable reference to an element in a [`SlotHeap`]; re-heapifies on drop if mutated.
+/// Mutable reference to an element in a [`SlotHeap`], holding a write lock.
+///
+/// If the value is mutated, the heap is re-heapified on drop of the returned guard.
 pub struct SlotHeapRefMut<'a, T>
 where
     T: PartialOrd,
@@ -262,7 +265,7 @@ where
 {
     /// Returns whether this element is the current minimum (top) of the heap.
     ///
-    /// Time complexity: O(1).
+    /// Time complexity: O(1)
     pub fn is_top(&self) -> bool {
         unsafe { self.guard.get_unchecked_index(self.id) == 0 }
     }
@@ -275,8 +278,8 @@ where
     ///
     /// # Returns
     ///
-    /// `true` if the element became (or remained) the minimum after re-heapification,
-    /// or if it wasn't mutated. `false` if it ended up at a different position.
+    /// `true` if the element became (or remained) the minimum after re-heapification (or if it wasn't mutated),
+    /// `false` if it ended up at a different position.
     ///
     /// Time complexity: O(log n) if the element was mutated, O(1) otherwise.
     pub fn finish(mut self) -> bool {

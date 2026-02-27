@@ -158,12 +158,3 @@ where
         }
     }
 }
-
-impl<T> Default for SlotHeap<T>
-where
-    T: PartialOrd,
-{
-    fn default() -> Self {
-        Self::new()
-    }
-}

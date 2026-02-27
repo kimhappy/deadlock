@@ -1,17 +1,19 @@
-use deadlock::SlotHeap;
+use deadlock::{SlotHeap, SlotHeapId, SlotHeapPeek, SlotHeapPeekMut, SlotHeapRef, SlotHeapRefMut};
 use std::{
     collections::HashSet,
     sync::{Arc, Mutex},
     thread,
 };
 
-fn _assert_send<T: Send>() {}
-fn _assert_sync<T: Sync>() {}
+fn _slotheap_send_sync_checks<'a>() {
+    fn assert_send_sync<T: Send + Sync>() {}
 
-#[allow(dead_code)]
-fn _compile_time_trait_checks() {
-    _assert_send::<SlotHeap<i32>>();
-    _assert_sync::<SlotHeap<i32>>();
+    assert_send_sync::<SlotHeap<i32>>();
+    assert_send_sync::<SlotHeapId<i32>>();
+    assert_send_sync::<SlotHeapPeek<'a, i32>>();
+    assert_send_sync::<SlotHeapPeekMut<'a, i32>>();
+    assert_send_sync::<SlotHeapRef<'a, i32>>();
+    assert_send_sync::<SlotHeapRefMut<'a, i32>>();
 }
 
 #[test]
