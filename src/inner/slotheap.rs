@@ -46,7 +46,7 @@ where
                 self.ids.swap_remove_unchecked_(index);
                 let tail = self.ids.get_unchecked(index);
                 self.entries.get_unchecked_mut(*tail).1 = index;
-                self.heapify(index)
+                self.heapify(index);
             }
 
             (value, index == 0)
@@ -79,10 +79,10 @@ where
         unsafe { self.entries.get_unchecked(id).1 }
     }
 
-    pub unsafe fn heapify(&mut self, mut index: usize) {
+    pub unsafe fn heapify(&mut self, mut index: usize) -> usize {
         unsafe {
             index = self.heapify_up(index);
-            self.heapify_down(index);
+            self.heapify_down(index)
         }
     }
 
@@ -97,13 +97,15 @@ where
         index
     }
 
-    pub unsafe fn heapify_down(&mut self, mut index: usize) {
+    pub unsafe fn heapify_down(&mut self, mut index: usize) -> usize {
         unsafe {
             while let Some(down_index) = self.next_down(index) {
                 self.swap_entries(index, down_index);
                 index = down_index
             }
         }
+
+        index
     }
 
     unsafe fn next_up(&self, index: usize) -> Option<usize> {

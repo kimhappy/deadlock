@@ -175,6 +175,29 @@ impl<T> SlotHeapPeekMut<'_, T>
 where
     T: PartialOrd,
 {
+    /// Explicitly finishes mutation and re-heapifies if needed, consuming the guard.
+    ///
+    /// This method allows early release of the write lock while determining whether the
+    /// element remains at the top after re-heapification. Unlike relying on `Drop`,
+    /// this provides immediate feedback about the element's final position.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the element is still the minimum after re-heapification (or if it wasn't mutated),
+    /// `false` if it moved to a different position.
+    ///
+    /// Time complexity: O(log n) if the element was mutated, O(1) otherwise.
+    pub fn finish(mut self) -> bool {
+        let is_top = if self.dirty {
+            unsafe { self.guard.heapify_down(0) == 0 }
+        } else {
+            true
+        };
+
+        mem::forget(self);
+        is_top
+    }
+
     fn deref(&self) -> &T {
         unsafe { self.guard.peek_unchecked() }
     }
@@ -244,6 +267,30 @@ where
         unsafe { self.guard.get_unchecked_index(self.id) == 0 }
     }
 
+    /// Explicitly finishes mutation and re-heapifies if needed, consuming the guard.
+    ///
+    /// This method allows early release of the write lock while determining whether the
+    /// element moved to the top after re-heapification. Unlike relying on `Drop`,
+    /// this provides immediate feedback about the element's final position.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the element became (or remained) the minimum after re-heapification,
+    /// or if it wasn't mutated. `false` if it ended up at a different position.
+    ///
+    /// Time complexity: O(log n) if the element was mutated, O(1) otherwise.
+    pub fn finish(mut self) -> bool {
+        let is_top = if self.dirty {
+            let index = unsafe { self.guard.get_unchecked_index(self.id) };
+            unsafe { self.guard.heapify(index) == 0 }
+        } else {
+            true
+        };
+
+        mem::forget(self);
+        is_top
+    }
+
     fn deref(&self) -> &T {
         unsafe { self.guard.get_unchecked(self.id) }
     }
@@ -261,7 +308,9 @@ where
     fn drop(&mut self) {
         if self.dirty {
             let index = unsafe { self.guard.get_unchecked_index(self.id) };
-            unsafe { self.guard.heapify(index) }
+            unsafe {
+                self.guard.heapify(index);
+            }
         }
     }
 }
