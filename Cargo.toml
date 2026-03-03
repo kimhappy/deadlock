@@ -1,6 +1,6 @@
 [package]
 name = "deadlock"
-version = "0.9.0"
+version = "0.10.0"
 edition = "2018"
 description = "Thread-safe slot map and slot min-heap with stable RAII handle"
 authors = ["Hwanhee Kim <babtul21@gmail.com>"]
