@@ -1,7 +1,10 @@
 //! Thread-safe slot min-heap with stable RAII handle.
 
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::mem::{self, ManuallyDrop};
+use std::{
+    fmt,
+    mem::{self, ManuallyDrop},
+};
 use triomphe::Arc;
 
 use crate::inner;
@@ -127,6 +130,18 @@ where
             id: self.id,
             dirty: false,
         }
+    }
+}
+
+impl<T> fmt::Debug for SlotHeapId<T>
+where
+    T: PartialOrd,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SlotHeapId")
+            .field("from", &self.from.as_ptr())
+            .field("id", &self.id)
+            .finish()
     }
 }
 

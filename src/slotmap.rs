@@ -2,7 +2,7 @@
 
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{
-    iter,
+    fmt, iter,
     mem::{self, ManuallyDrop},
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -175,6 +175,15 @@ impl<T> SlotMapId<T> {
     pub fn get_mut(&self) -> SlotMapRefMut<'_, T> {
         let guard = self.from.inner.write();
         SlotMapRefMut { guard, id: self.id }
+    }
+}
+
+impl<T> fmt::Debug for SlotMapId<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SlotMapId")
+            .field("from", &self.from.as_ptr())
+            .field("id", &self.id)
+            .finish()
     }
 }
 
